@@ -5,7 +5,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.camera.core.Camera
+import androidx.camera.core.CameraX;
 import androidx.camera.core.CameraSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -15,59 +15,114 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
-    @OptIn(ExperimentalMaterial3Api::class)
+    private lateinit var cameraExecutor: ExecutorService
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Initialize camera executor
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
         setContent {
             TMLEC_QRScanTheme {
+                var isCameraVisible by remember { mutableStateOf(false) }
+
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     topBar = {
                         CenterAlignedTopAppBar(
                             title = {
                                 Text(
-                                    text = "tML-EC QR Scan Project", // Title
-                                    textAlign = TextAlign.Center, // Center
+                                    text = "My App Title",
                                     style = MaterialTheme.typography.titleLarge
                                 )
                             }
                         )
                     }
                 ) { innerPadding ->
-                    // Main Screen Content
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(innerPadding)
-                    ){
-                        // Button
+                    ) {
+                        // Show Camera Preview if enabled
+                        if (isCameraVisible) {
+                            CameraPreview(modifier = Modifier.align(Alignment.Center))
+                        }
+
+                        // Button to toggle the camera preview
                         Button(
-                            onClick = {},
+                            onClick = {
+                                isCameraVisible = !isCameraVisible
+                            },
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(16.dp)
-
-                        ){
-                            Text(text = "Scan")
+                        ) {
+                            Text(
+                                text = if (isCameraVisible) "Hide Camera" else "Show Camera"
+                            )
                         }
-
                     }
-
                 }
             }
         }
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown() // Clean up the camera executor
+    }
 }
+
+//Camera Preview Composable
+@Composable
+fun CameraPreview(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current // Replace LifecycleOwnerAmbient with this
+    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+    val previewView = remember { PreviewView(context) }
+
+    AndroidView(
+        factory = { previewView },
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(4f / 3f) // Standard camera preview aspect ratio
+    ) {
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            val preview = androidx.camera.core.Preview.Builder().build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+
+            try {
+                // Bind the camera to the lifecycle and preview
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
+                    preview
+                )
+            } catch (e: Exception) {
+                Log.e("CameraPreview", "Camera binding failed", e)
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
+}
+
 
 
 
