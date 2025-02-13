@@ -17,6 +17,7 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
     }
+    //Just in case the versions are not pulled automatically
 //    versionCatalogs {
 //        create("libs") { // Initialize the `libs` alias for Version Catalogs
 //            from(files("gradle/libs.versions.toml"))
