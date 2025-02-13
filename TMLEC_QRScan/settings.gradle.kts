@@ -17,7 +17,13 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
     }
+    versionCatalogs {
+        create("libs") { // Initialize the `libs` alias for Version Catalogs
+            from(files("gradle/libs.versions.toml"))
+        }
+    }
 }
+
 
 rootProject.name = "TML-EC_QR-Scan"
 include(":app")
