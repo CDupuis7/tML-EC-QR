@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
                         CenterAlignedTopAppBar(
                             title = {
                                 Text(
-                                    text = "My App Title",
+                                    text = "tML-EC QR App",
                                     style = MaterialTheme.typography.titleLarge
                                 )
                             }
