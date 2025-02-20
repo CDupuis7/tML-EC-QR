@@ -88,7 +88,7 @@ dependencies {
     implementation("androidx.camera:camera-viewfinder:1.4.0-alpha07")
 
 
-    implementation files('libs/opencv-android.jar')
+    implementation(project(":opencv"))
 
 
 

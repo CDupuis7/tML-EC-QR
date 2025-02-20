@@ -24,6 +24,12 @@ import androidx.core.content.ContextCompat
 import com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import org.opencv.android.OpenCVLoader;
+import org.opencv.android.Utils;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
 
 class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: ExecutorService
@@ -35,6 +41,11 @@ class MainActivity : ComponentActivity() {
 
         // Initialize camera executor
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        //Check Opencv
+        if (OpenCVLoader.initLocal()) {
+            Log.i("OpenCV", "OpenCV Loaded")
+        }
 
         setContent {
             TMLEC_QRScanTheme {
