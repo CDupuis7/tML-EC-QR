@@ -28,4 +28,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "TML-EC_QR-Scan"
 include(":app")
- 
+include(":opencv")

@@ -59,6 +59,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -66,6 +67,9 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+
+
 
     val camerax_version = "1.4.1"
     // The following line is optional, as the core library is included indirectly by camera-camera2
@@ -82,5 +86,10 @@ dependencies {
     // If you want to additionally use the CameraX Extensions library
     implementation("androidx.camera:camera-extensions:1.4.1")
     implementation("androidx.camera:camera-viewfinder:1.4.0-alpha07")
+
+
+    implementation files('libs/opencv-android.jar')
+
+
 
 }
