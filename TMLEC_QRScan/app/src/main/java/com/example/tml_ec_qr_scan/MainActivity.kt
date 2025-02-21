@@ -46,6 +46,12 @@ import retrofit2.Callback
 import retrofit2.Response
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import org.opencv.android.OpenCVLoader;
+import org.opencv.android.Utils;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
 
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
@@ -58,6 +64,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        //Check Opencv
+        if (OpenCVLoader.initLocal()) {
+            Log.i("OpenCV", "OpenCV Loaded")
+        }
 
         setContent {
             var qrResult by remember { mutableStateOf("") }
