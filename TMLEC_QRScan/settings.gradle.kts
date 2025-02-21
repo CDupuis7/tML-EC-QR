@@ -28,4 +28,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "TML-EC_QR-Scan"
 include(":app")
- 
+include(":opencv")
+project(":opencv").projectDir = File(rootDir, "opencv/java")
+
