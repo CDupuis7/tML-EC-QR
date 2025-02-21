@@ -98,6 +98,11 @@ dependencies {
     implementation("androidx.camera:camera-extensions:1.4.1")
     implementation("androidx.camera:camera-viewfinder:1.4.0-alpha07")
 
+
+    implementation(project(":opencv"))
+
+
+
     implementation ("com.squareup.retrofit2:retrofit:2.9.0")
     implementation ("com.squareup.retrofit2:converter-gson:2.9.0")
 
