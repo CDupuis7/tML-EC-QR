@@ -16,16 +16,18 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
-    //Just in case the versions are not pulled automatically
 //    versionCatalogs {
-//        create("libs") { // Initialize the `libs` alias for Version Catalogs
+//        create("libs") {
 //            from(files("gradle/libs.versions.toml"))
 //        }
 //    }
 }
 
-
 rootProject.name = "TML-EC_QR-Scan"
 include(":app")
-include(":opencv")
+//include(":opencv")
+//include(":opencv")
+//include(":opencv")
+//include(":opencv")

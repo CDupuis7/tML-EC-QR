@@ -5,8 +5,8 @@ import retrofit2.http.Body
 import retrofit2.http.POST
 
 // Define the model that will be sent as JSON
-data class QRDataRequest(val qr_data: List<String>) //List instead of single string
-data class QRResponse(val qr_data: List<String>?)
+data class QRDataRequest(val qr_data: List<Pair<String,String>>) //List instead of single string
+data class QRResponse(val qr_data: List<Pair<String,String>>?)
 
 // Defining the API service interface
 interface QRApiService {
