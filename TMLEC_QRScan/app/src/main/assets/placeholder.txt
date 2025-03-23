@@ -1,0 +1,5 @@
+This is a placeholder for the TensorFlow Lite model.
+
+You should place your trained breathing_classifier.tflite model in this directory.
+
+If the model is not present, the app will fall back to a heuristic-based classification method. 
