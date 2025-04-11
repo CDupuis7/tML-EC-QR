@@ -92,8 +92,17 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation(libs.firebase.crashlytics.buildtools)
 
+    // Audio processing
+    // implementation("com.github.linxz-coder:android-audio-wave:v1.0.0")
+    implementation("androidx.media:media:1.7.0")
+
+    // Permissions handling
+    implementation("com.google.accompanist:accompanist-permissions:0.30.1")
+
     // MPAndroidChart for visualizations
     implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
+    implementation(libs.androidx.benchmark.common)
+    implementation(libs.play.services.dtdi)
 
     // Testing dependencies
     testImplementation(libs.junit)

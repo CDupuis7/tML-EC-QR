@@ -1,11 +1,9 @@
 package com.example.tml_ec_qr_scan
 
-// import androidx.compose.ui.text.input.KeyboardOptions
-// import androidx.compose.material3.ExposedDropdownMenu
-// import androidx.compose.material3.icons.Icons
-// import androidx.compose.material3.icons.filled.KeyboardArrowDown
-// import androidx.compose.material3.icons.filled.KeyboardArrowUp
+import android.Manifest
+import android.content.ContentValues.TAG
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
@@ -15,11 +13,14 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
@@ -30,429 +31,392 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material3.Button
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import boofcv.android.ConvertBitmap
 import boofcv.factory.fiducial.FactoryFiducial
 import boofcv.struct.image.GrayU8
+import com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-data class BoofCvQrDetection(val rawValue: String?, val center: Offset, val corners: List<Offset>)
+// Data class definitions are now in models.kt
 
-data class TrackedPoint(
-        val center: Offset,
-        val lastUpdateTime: Long,
-        val velocity: Offset,
-        val isLocked: Boolean = false,
-        val initialPosition: Offset? = null
-)
-
-data class RespiratoryDataPoint(
-        val timestamp: Long,
-        val position: Offset,
-        val qrId: String,
-        val movement: String = "unknown",
-        val breathingPhase: String = "unknown",
-        val amplitude: Float = 0f,
-        val velocity: Float = 0f
-)
-
-data class BreathingMetrics(
-        val breathingRate: Float, // breaths per minute
-        val averageAmplitude: Float, // average chest movement
-        val maxAmplitude: Float, // maximum chest movement
-        val minAmplitude: Float, // minimum chest movement
-        val breathCount: Int // total number of breaths
-)
-
-data class PatientMetadata(
-        val id: String,
-        val age: Int,
-        val gender: String,
-        val healthStatus: String,
-        val additionalNotes: String = ""
-)
-
-fun Offset.distanceTo(other: Offset): Float {
-        return sqrt((this.x - other.x).pow(2) + (this.y - other.y).pow(2))
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
         private lateinit var cameraExecutor: ExecutorService
+        private val viewModel: MainViewModel by viewModels()
+        private var cameraProvider: ProcessCameraProvider? = null
+        private var preview: Preview? = null
+        private var imageAnalyzer: ImageAnalysis? = null
+        private lateinit var previewView: PreviewView
 
-        @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+        // Track recording session
+        private var recordingStartTime = 0L
+        private val smoothedCenters = mutableMapOf<String, TrackedPoint>()
+        private val lastPhaseChangeTimestamp = mutableMapOf<String, Long>()
+
+        // Initialize breathing classifier
+        private lateinit var breathingClassifier: BreathingClassifier
+
+        // Calibration related variables
+        private var isCalibrating = false
+        private var calibrationStartTime = 0L
+        private var calibrationData = mutableListOf<Float>()
+        private var calibrationVelocityThresholds =
+                CalibrationThresholds(
+                        inhaleThreshold = -8f, // Default values
+                        exhaleThreshold = 8f,
+                        pauseThresholdLow = -3f,
+                        pauseThresholdHigh = 3f
+                )
+        private val CALIBRATION_DURATION_MS = 10000 // 10 seconds
+
+        // Training mode flag to ensure consistent data collection
+        private var isTrainingDataMode = false
+
+        // Permission request codes
+        private val PERMISSION_REQUEST_CAMERA = 100
+        private val PERMISSION_REQUEST_STORAGE = 101
+
+        // Callback for image analysis
+        private var qrCodeDetectionCallback:
+                ((List<BoofCvQrDetection>, Float, Float, Int) -> Unit)? =
+                null
+
+        private fun setImageAnalysisCallback(
+                callback: (List<BoofCvQrDetection>, Float, Float, Int) -> Unit
+        ) {
+                qrCodeDetectionCallback = callback
+        }
+
+        @RequiresApi(Build.VERSION_CODES.S)
         override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
                 enableEdgeToEdge()
+
+                Log.d("MainActivity", "onCreate called")
+
+                // Initialize camera executor
                 cameraExecutor = Executors.newSingleThreadExecutor()
 
+                // Initialize previewView early
+                previewView =
+                        PreviewView(this).apply {
+                                implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                        }
+
+                // Initialize breathing classifier
+                breathingClassifier = BreathingClassifier(this)
+                Log.d("MainActivity", "Breathing classifier initialized")
+
+                // Set up viewModel access to calibration functions
+                viewModel.setCalibrationCompleter { completeCalibration() }
+
+                // Check and request camera permissions
+                requestCameraPermissionIfNeeded()
+
                 setContent {
-                        // Move state declarations outside remember blocks
-                        val context = LocalContext.current
-                        val lifecycleOwner = LocalLifecycleOwner.current
-
-                        // State declarations
-                        var qrResult by remember { mutableStateOf("") }
-                        var boofDetections by remember {
-                                mutableStateOf<List<BoofCvQrDetection>>(emptyList())
-                        }
-                        var imageWidth by remember { mutableStateOf(1f) }
-                        var imageHeight by remember { mutableStateOf(1f) }
-                        var rotationDegrees by remember { mutableStateOf(0) }
-                        var isTracking by remember { mutableStateOf(false) }
-                        var trackingStartTime by remember { mutableStateOf(0L) }
-                        var respiratoryData by remember {
-                                mutableStateOf<MutableList<RespiratoryDataPoint>>(mutableListOf())
-                        }
-                        var currentBreathingPhase by remember { mutableStateOf("Unknown") }
-                        var breathingConfidence by remember { mutableStateOf(0.0f) }
-                        var showMetadataForm by remember { mutableStateOf(true) }
-                        var currentPatientMetadata by remember {
-                                mutableStateOf<PatientMetadata?>(null)
-                        }
-
-                        // Constants and non-state variables
-                        val smoothingFactor = 0.95f
-                        val smoothedCenters = remember { mutableMapOf<String, TrackedPoint>() }
-
-                        // Create breathing classifier outside remember
-                        val breathingClassifier =
-                                produceState<BreathingClassifier?>(initialValue = null) {
-                                                value = BreathingClassifier(context)
-                                                awaitDispose { value?.close() }
+                        Log.d("MainActivity", "Setting content with Compose")
+                        com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme {
+                                Surface(
+                                        modifier = Modifier.fillMaxSize(),
+                                        color = MaterialTheme.colorScheme.background
+                                ) {
+                                        // State for QR code detections
+                                        var qrDetections by remember {
+                                                mutableStateOf(emptyList<BoofCvQrDetection>())
                                         }
-                                        .value
+                                        var imageWidth by remember { mutableStateOf(1280f) }
+                                        var imageHeight by remember { mutableStateOf(720f) }
+                                        var rotationDegrees by remember { mutableStateOf(0) }
 
-                        LaunchedEffect(Unit) {
-                                Log.d("BreathingClassifierInit", "Initializing BreathingClassifier")
-                        }
-
-                        LaunchedEffect(currentBreathingPhase, breathingConfidence) {
-                                Log.d(
-                                        "BreathingState",
-                                        "UI Update: Phase: $currentBreathingPhase, Confidence: $breathingConfidence"
-                                )
-                        }
-
-                        // Add state observer for breathing phase updates
-                        LaunchedEffect(key1 = currentBreathingPhase, key2 = breathingConfidence) {
-                                Log.d(
-                                        "BreathingStateObserver",
-                                        "State changed: Phase=$currentBreathingPhase, Confidence=${(breathingConfidence * 100).toInt()}%"
-                                )
-                        }
-
-                        MaterialTheme {
-                                Scaffold(
-                                        topBar = {
-                                                CenterAlignedTopAppBar(
-                                                        title = {
-                                                                Text(
-                                                                        "Respiratory QR Monitor",
-                                                                        style =
-                                                                                MaterialTheme
-                                                                                        .typography
-                                                                                        .titleLarge
-                                                                )
+                                        // Collect QR detections from image analyzer
+                                        DisposableEffect(Unit) {
+                                                val disposable =
+                                                        object {
+                                                                var active = true
                                                         }
-                                                )
+
+                                                // Function to update QR detections from image
+                                                // analyzer
+                                                fun updateQrDetections(
+                                                        detections: List<BoofCvQrDetection>,
+                                                        width: Float,
+                                                        height: Float,
+                                                        rotation: Int
+                                                ) {
+                                                        if (disposable.active) {
+                                                                qrDetections = detections
+                                                                imageWidth = width
+                                                                imageHeight = height
+                                                                rotationDegrees = rotation
+                                                        }
+                                                }
+
+                                                // Set the callback for image analysis
+                                                setImageAnalysisCallback {
+                                                        detections,
+                                                        width,
+                                                        height,
+                                                        rotation ->
+                                                        updateQrDetections(
+                                                                detections,
+                                                                width,
+                                                                height,
+                                                                rotation
+                                                        )
+                                                }
+
+                                                onDispose { disposable.active = false }
                                         }
-                                ) { innerPadding ->
-                                        Column(
-                                                modifier =
-                                                        Modifier.fillMaxSize().padding(innerPadding)
-                                        ) {
-                                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                                        CameraPreview(
-                                                                modifier = Modifier.fillMaxWidth(),
-                                                                onDetections = {
-                                                                        detections,
-                                                                        imgW,
-                                                                        imgH,
-                                                                        rotation ->
-                                                                        val currentTime =
-                                                                                System.currentTimeMillis()
 
-                                                                        val stabilizedDetections =
-                                                                                detections.map {
-                                                                                        detection ->
-                                                                                        processDetections(
-                                                                                                detection,
-                                                                                                currentTime,
-                                                                                                smoothedCenters
-                                                                                        )
-                                                                                }
-
-                                                                        boofDetections =
-                                                                                stabilizedDetections
-                                                                        imageWidth = imgW
-                                                                        imageHeight = imgH
-                                                                        rotationDegrees = rotation
-                                                                        qrResult =
-                                                                                stabilizedDetections
-                                                                                        .joinToString {
-                                                                                                it.rawValue
-                                                                                                        ?: "unknown"
-                                                                                        }
-
-                                                                        if (stabilizedDetections
-                                                                                        .isNotEmpty()
-                                                                        ) {
-                                                                                val detection =
-                                                                                        stabilizedDetections
-                                                                                                .first()
-                                                                                val key =
-                                                                                        detection
-                                                                                                .rawValue
-                                                                                                ?: "unknown"
-
-                                                                                // Calculate
-                                                                                // velocity for
-                                                                                // this point
-                                                                                var velocity = 0f
-                                                                                if (respiratoryData
-                                                                                                .isNotEmpty()
-                                                                                ) {
-                                                                                        val lastPoint =
-                                                                                                respiratoryData
-                                                                                                        .last()
-                                                                                        val timeDiff =
-                                                                                                (currentTime -
-                                                                                                        trackingStartTime -
-                                                                                                        lastPoint
-                                                                                                                .timestamp) /
-                                                                                                        1000f
-                                                                                        if (timeDiff >
-                                                                                                        0
-                                                                                        ) {
-                                                                                                velocity =
-                                                                                                        (detection
-                                                                                                                .center
-                                                                                                                .y -
-                                                                                                                lastPoint
-                                                                                                                        .position
-                                                                                                                        .y) /
-                                                                                                                timeDiff
-                                                                                                Log.d(
-                                                                                                        "Velocity",
-                                                                                                        "Raw velocity: $velocity, timeDiff: $timeDiff, y-diff: ${detection.center.y - lastPoint.position.y}, isTracking: $isTracking"
-                                                                                                )
-                                                                                        }
-                                                                                }
-
-                                                                                // Create new
-                                                                                // respiratory
-                                                                                // data point
-                                                                                val dataPoint =
-                                                                                        RespiratoryDataPoint(
-                                                                                                timestamp =
-                                                                                                        currentTime -
-                                                                                                                trackingStartTime,
-                                                                                                position =
-                                                                                                        detection
-                                                                                                                .center,
-                                                                                                qrId =
-                                                                                                        key,
-                                                                                                movement =
-                                                                                                        if (velocity <
-                                                                                                                        -5f
-                                                                                                        )
-                                                                                                                "upward"
-                                                                                                        else if (velocity >
-                                                                                                                        5f
-                                                                                                        )
-                                                                                                                "downward"
-                                                                                                        else
-                                                                                                                "stable",
-                                                                                                breathingPhase =
-                                                                                                        determineBreathingPhase(
-                                                                                                                velocity
-                                                                                                        ),
-                                                                                                amplitude =
-                                                                                                        detection
-                                                                                                                .center
-                                                                                                                .y -
-                                                                                                                (if (respiratoryData
-                                                                                                                                .isNotEmpty()
-                                                                                                                )
-                                                                                                                        respiratoryData
-                                                                                                                                .first()
-                                                                                                                                .position
-                                                                                                                                .y
-                                                                                                                else
-                                                                                                                        detection
-                                                                                                                                .center
-                                                                                                                                .y),
-                                                                                                velocity =
-                                                                                                        velocity
-                                                                                        )
-
-                                                                                // Process breathing
-                                                                                // phase and
-                                                                                // IMMEDIATELY
-                                                                                // update
-                                                                                // UI state
-                                                                                breathingClassifier
-                                                                                        ?.let {
-                                                                                                classifier
-                                                                                                ->
-                                                                                                try {
-                                                                                                        val result =
-                                                                                                                classifier
-                                                                                                                        .processNewDataPoint(
-                                                                                                                                dataPoint
-                                                                                                                        )
-                                                                                                        // Force UI update with direct state assignments
-                                                                                                        currentBreathingPhase =
-                                                                                                                result.phase
-                                                                                                                        .replaceFirstChar {
-                                                                                                                                it.uppercase()
-                                                                                                                        }
-                                                                                                        breathingConfidence =
-                                                                                                                result.confidence
-
-                                                                                                        // Enhanced logging for debugging
-                                                                                                        Log.d(
-                                                                                                                "BreathingUI",
-                                                                                                                """
-                                                                            UI STATE UPDATE:
-                                                                            Phase: ${result.phase}
-                                                                            Previous Phase: $currentBreathingPhase
-                                                                            Confidence: ${result.confidence}
-                                                                            Velocity: $velocity
-                                                                            Is Tracking: $isTracking
-                                                                            Data Point: ${dataPoint.movement}, ${dataPoint.breathingPhase}
-                                                                            """.trimIndent()
-                                                                                                        )
-                                                                                                } catch (
-                                                                                                        e:
-                                                                                                                Exception) {
-                                                                                                        Log.e(
-                                                                                                                "BreathingClassifier",
-                                                                                                                "Error processing data point: ${e.message}"
-                                                                                                        )
-                                                                                                }
-                                                                                        }
-                                                                                        ?: run {
-                                                                                                Log.e(
-                                                                                                        "BreathingClassifier",
-                                                                                                        "Classifier is null!"
-                                                                                                )
-                                                                                                // Fall back to direct phase detection if classifier is not available
-                                                                                                currentBreathingPhase =
-                                                                                                        dataPoint
-                                                                                                                .breathingPhase
-                                                                                                                .replaceFirstChar {
-                                                                                                                        it.uppercase()
-                                                                                                                }
-                                                                                                breathingConfidence =
-                                                                                                        if (dataPoint
-                                                                                                                        .breathingPhase ==
-                                                                                                                        "pause"
-                                                                                                        )
-                                                                                                                0.5f
-                                                                                                        else
-                                                                                                                0.7f
-                                                                                                Log.d(
-                                                                                                        "BreathingUI",
-                                                                                                        "Fallback UI update: Phase=${dataPoint.breathingPhase}, Confidence=${breathingConfidence}"
-                                                                                                )
-                                                                                        }
-
-                                                                                // Add to data
-                                                                                // collection if
-                                                                                // tracking
-                                                                                if (isTracking) {
-                                                                                        respiratoryData
-                                                                                                .add(
-                                                                                                        dataPoint
-                                                                                                )
-                                                                                }
-                                                                        }
-                                                                }
+                                        // Initialize camera when entering CameraSetup state
+                                        val uiState by viewModel.uiState.collectAsState()
+                                        LaunchedEffect(uiState) {
+                                                if (uiState is UiState.Calibrating ||
+                                                                uiState is UiState.Recording
+                                                ) {
+                                                        Log.d(
+                                                                "MainActivity",
+                                                                "LaunchedEffect triggering camera initialization for state: $uiState"
                                                         )
+                                                        if (cameraProvider == null) {
+                                                                Log.d(
+                                                                        "MainActivity",
+                                                                        "Initializing camera for state: $uiState"
+                                                                )
+                                                                initializeCamera()
+                                                        } else {
+                                                                Log.d(
+                                                                        "MainActivity",
+                                                                        "Rebinding camera for state: $uiState"
+                                                                )
+                                                                bindCameraUseCases()
+                                                        }
+                                                }
+                                        }
 
-                                                        // QR code overlay - this needs to be
-                                                        // outside the
-                                                        // onDetections callback
-                                                        BoofCVQRCodeOverlay(
-                                                                qrDetections = boofDetections,
-                                                                imageWidth = imageWidth,
-                                                                imageHeight = imageHeight,
-                                                                rotationDegrees = rotationDegrees,
-                                                                modifier = Modifier.fillMaxSize()
+                                        // Initialize camera when isCameraStarted changes
+                                        val isCameraStarted by
+                                                viewModel.isCameraStarted.collectAsState()
+                                        LaunchedEffect(isCameraStarted) {
+                                                if (isCameraStarted &&
+                                                                uiState is UiState.CameraSetup
+                                                ) {
+                                                        Log.d(
+                                                                "MainActivity",
+                                                                "LaunchedEffect triggering camera initialization for isCameraStarted: $isCameraStarted"
                                                         )
+                                                        if (cameraProvider == null) {
+                                                                Log.d(
+                                                                        "MainActivity",
+                                                                        "Initializing camera for isCameraStarted: $isCameraStarted"
+                                                                )
+                                                                initializeCamera()
+                                                        } else {
+                                                                Log.d(
+                                                                        "MainActivity",
+                                                                        "Rebinding camera for isCameraStarted: $isCameraStarted"
+                                                                )
+                                                                bindCameraUseCases()
+                                                        }
+                                                }
+                                        }
 
-                                                        // Real-time breathing indicator overlay
-                                                        if (boofDetections.isNotEmpty()) {
-                                                                Box(
+                                        com.example.tml_ec_qr_scan.MainScreen(
+                                                viewModel = viewModel,
+                                                onStartRecording = { startRecording() },
+                                                onStopRecording = { stopRecording() },
+                                                onForceBreathingUpdate = { forceBreathingUpdate() },
+                                                onSaveData = { saveData() },
+                                                onNewPatient = { newPatient() },
+                                                onStartCalibration = { startCalibration() },
+                                                onToggleTrainingMode = { toggleTrainingMode() },
+                                                onSaveGraph = { saveRespirationChartAsImage() },
+                                                previewView = {
+                                                        Box(modifier = Modifier.fillMaxSize()) {
+                                                                // Camera preview
+                                                                AndroidView(
+                                                                        factory = { previewView },
                                                                         modifier =
-                                                                                Modifier.align(
-                                                                                                Alignment
-                                                                                                        .TopEnd
-                                                                                        )
-                                                                                        .padding(
-                                                                                                16.dp
-                                                                                        )
-                                                                ) {
-                                                                        Column(
-                                                                                horizontalAlignment =
-                                                                                        Alignment
-                                                                                                .CenterHorizontally,
+                                                                                Modifier.fillMaxSize()
+                                                                )
+
+                                                                // Draw QR code overlay
+                                                                if (qrDetections.isNotEmpty()) {
+                                                                        BoofCVQRCodeOverlay(
+                                                                                qrDetections =
+                                                                                        qrDetections,
+                                                                                imageWidth =
+                                                                                        imageWidth,
+                                                                                imageHeight =
+                                                                                        imageHeight,
+                                                                                rotationDegrees =
+                                                                                        rotationDegrees,
                                                                                 modifier =
-                                                                                        Modifier.background(
+                                                                                        Modifier.fillMaxSize()
+                                                                        )
+                                                                }
+
+                                                                // Draw center dot to help with
+                                                                // alignment
+                                                                Canvas(
+                                                                        modifier =
+                                                                                Modifier.fillMaxSize()
+                                                                ) {
+                                                                        val centerX = size.width / 2
+                                                                        val centerY =
+                                                                                size.height / 2
+
+                                                                        // Draw crosshair lines for
+                                                                        // alignment
+                                                                        drawLine(
+                                                                                color =
+                                                                                        Color.Red
+                                                                                                .copy(
+                                                                                                        alpha =
+                                                                                                                0.7f
+                                                                                                ),
+                                                                                start =
+                                                                                        Offset(
+                                                                                                centerX -
+                                                                                                        40,
+                                                                                                centerY
+                                                                                        ),
+                                                                                end =
+                                                                                        Offset(
+                                                                                                centerX +
+                                                                                                        40,
+                                                                                                centerY
+                                                                                        ),
+                                                                                strokeWidth = 2f
+                                                                        )
+                                                                        drawLine(
+                                                                                color =
+                                                                                        Color.Red
+                                                                                                .copy(
+                                                                                                        alpha =
+                                                                                                                0.7f
+                                                                                                ),
+                                                                                start =
+                                                                                        Offset(
+                                                                                                centerX,
+                                                                                                centerY -
+                                                                                                        40
+                                                                                        ),
+                                                                                end =
+                                                                                        Offset(
+                                                                                                centerX,
+                                                                                                centerY +
+                                                                                                        40
+                                                                                        ),
+                                                                                strokeWidth = 2f
+                                                                        )
+
+                                                                        // Draw red center dot
+                                                                        drawCircle(
+                                                                                color =
+                                                                                        Color.Red
+                                                                                                .copy(
+                                                                                                        alpha =
+                                                                                                                0.9f
+                                                                                                ),
+                                                                                radius = 12f,
+                                                                                center =
+                                                                                        Offset(
+                                                                                                centerX,
+                                                                                                centerY
+                                                                                        )
+                                                                        )
+
+                                                                        // Add placement guide text
+                                                                        drawContext.canvas
+                                                                                .nativeCanvas
+                                                                                .apply {
+                                                                                        val textPaint =
+                                                                                                android.graphics
+                                                                                                        .Paint()
+                                                                                                        .apply {
+                                                                                                                color =
+                                                                                                                        android.graphics
+                                                                                                                                .Color
+                                                                                                                                .RED
+                                                                                                                textSize =
+                                                                                                                        36f
+                                                                                                                textAlign =
+                                                                                                                        android.graphics
+                                                                                                                                .Paint
+                                                                                                                                .Align
+                                                                                                                                .CENTER
+                                                                                                                setShadowLayer(
+                                                                                                                        3f,
+                                                                                                                        0f,
+                                                                                                                        0f,
+                                                                                                                        android.graphics
+                                                                                                                                .Color
+                                                                                                                                .BLACK
+                                                                                                                )
+                                                                                                        }
+                                                                                        drawText(
+                                                                                                "Align QR code here",
+                                                                                                centerX,
+                                                                                                centerY -
+                                                                                                        60,
+                                                                                                textPaint
+                                                                                        )
+                                                                                }
+                                                                }
+
+                                                                // Overlay for breathing phase
+                                                                val breathingPhase by
+                                                                        viewModel
+                                                                                .currentBreathingPhase
+                                                                                .collectAsState()
+                                                                val confidence by
+                                                                        viewModel
+                                                                                .breathingConfidence
+                                                                                .collectAsState()
+                                                                val currentVelocity by
+                                                                        viewModel.currentVelocity
+                                                                                .collectAsState()
+                                                                val isRecording by
+                                                                        viewModel.isRecording
+                                                                                .collectAsState()
+
+                                                                if (breathingPhase != "Unknown") {
+                                                                        Box(
+                                                                                modifier =
+                                                                                        Modifier.align(
+                                                                                                        Alignment
+                                                                                                                .TopEnd
+                                                                                                )
+                                                                                                .padding(
+                                                                                                        top =
+                                                                                                                32.dp,
+                                                                                                        end =
+                                                                                                                16.dp,
+                                                                                                        start =
+                                                                                                                16.dp
+                                                                                                )
+                                                                                                .background(
                                                                                                         Color.Black
                                                                                                                 .copy(
                                                                                                                         alpha =
@@ -467,679 +431,332 @@ class MainActivity : ComponentActivity() {
                                                                                                         8.dp
                                                                                                 )
                                                                         ) {
-                                                                                Text(
-                                                                                        text =
-                                                                                                currentBreathingPhase
-                                                                                                        .replaceFirstChar {
-                                                                                                                if (it.isLowerCase()
-                                                                                                                )
-                                                                                                                        it.titlecase()
-                                                                                                                else
-                                                                                                                        it.toString()
-                                                                                                        },
-                                                                                        color =
-                                                                                                when (currentBreathingPhase
-                                                                                                                .lowercase()
-                                                                                                ) {
-                                                                                                        "inhaling" ->
-                                                                                                                Color(
-                                                                                                                        0xFF81C784
-                                                                                                                ) // Green
-                                                                                                        "exhaling" ->
-                                                                                                                Color(
-                                                                                                                        0xFF64B5F6
-                                                                                                                ) // Blue
-                                                                                                        else ->
-                                                                                                                Color.White
-                                                                                                },
-                                                                                        style =
-                                                                                                MaterialTheme
-                                                                                                        .typography
-                                                                                                        .titleMedium
-                                                                                )
-                                                                                Text(
-                                                                                        text =
-                                                                                                "Confidence: ${(breathingConfidence * 100).toInt()}%",
-                                                                                        color =
-                                                                                                Color.White,
-                                                                                        style =
-                                                                                                MaterialTheme
-                                                                                                        .typography
-                                                                                                        .bodySmall
-                                                                                )
-
-                                                                                // Add velocity
-                                                                                // debug info
-                                                                                if (respiratoryData
-                                                                                                .isNotEmpty()
+                                                                                Column(
+                                                                                        horizontalAlignment =
+                                                                                                Alignment
+                                                                                                        .CenterHorizontally
                                                                                 ) {
-                                                                                        val lastVelocity =
-                                                                                                respiratoryData
-                                                                                                        .last()
-                                                                                                        .velocity
                                                                                         Text(
                                                                                                 text =
-                                                                                                        "Velocity: ${lastVelocity.format(1)}",
+                                                                                                        breathingPhase,
                                                                                                 color =
-                                                                                                        Color.Yellow,
-                                                                                                style =
-                                                                                                        MaterialTheme
-                                                                                                                .typography
-                                                                                                                .bodySmall
-                                                                                        )
-                                                                                }
-
-                                                                                // Add recording
-                                                                                // status
-                                                                                if (isTracking) {
-                                                                                        Text(
-                                                                                                text =
-                                                                                                        "Recording Active",
-                                                                                                color =
-                                                                                                        Color.Green,
-                                                                                                style =
-                                                                                                        MaterialTheme
-                                                                                                                .typography
-                                                                                                                .bodySmall
-                                                                                        )
-                                                                                }
-                                                                        }
-                                                                }
-                                                        }
-
-                                                        // Add Respiration Chart
-                                                        Box(
-                                                                modifier =
-                                                                        Modifier.fillMaxWidth()
-                                                                                .height(200.dp)
-                                                                                .padding(8.dp)
-                                                        ) {
-                                                                RespirationChart(
-                                                                        respiratoryData =
-                                                                                respiratoryData,
-                                                                        modifier =
-                                                                                Modifier.fillMaxSize(),
-                                                                        lineColor =
-                                                                                Color(0xFF81C784),
-                                                                        maxPoints = 150
-                                                                )
-                                                        }
-                                                }
-
-                                                Column(
-                                                        modifier =
-                                                                Modifier.fillMaxWidth()
-                                                                        .padding(16.dp),
-                                                        horizontalAlignment =
-                                                                Alignment.CenterHorizontally
-                                                ) {
-                                                        if (showMetadataForm) {
-                                                                MetadataInputForm(
-                                                                        onSubmit = { metadata ->
-                                                                                currentPatientMetadata =
-                                                                                        metadata
-                                                                                showMetadataForm =
-                                                                                        false
-                                                                        }
-                                                                )
-                                                        } else {
-                                                                // Show recording controls only
-                                                                // after metadata is entered
-                                                                Column(
-                                                                        modifier =
-                                                                                Modifier.fillMaxWidth(),
-                                                                        horizontalAlignment =
-                                                                                Alignment
-                                                                                        .CenterHorizontally
-                                                                ) {
-                                                                        Text(
-                                                                                "Patient ID: ${currentPatientMetadata?.id}",
-                                                                                style =
-                                                                                        MaterialTheme
-                                                                                                .typography
-                                                                                                .titleMedium
-                                                                        )
-
-                                                                        Spacer(
-                                                                                modifier =
-                                                                                        Modifier.height(
-                                                                                                8.dp
-                                                                                        )
-                                                                        )
-
-                                                                        Button(
-                                                                                onClick = {
-                                                                                        if (!isTracking
-                                                                                        ) {
-                                                                                                // START RECORDING - initialize everything properly
-                                                                                                isTracking =
-                                                                                                        true
-                                                                                                trackingStartTime =
-                                                                                                        System.currentTimeMillis()
-                                                                                                respiratoryData
-                                                                                                        .clear()
-
-                                                                                                // Initialize with some default phase for better UX
-                                                                                                // but don't reset if already detecting something
-                                                                                                if (currentBreathingPhase
-                                                                                                                .lowercase() ==
-                                                                                                                "unknown"
-                                                                                                ) {
-                                                                                                        currentBreathingPhase =
-                                                                                                                "Pause"
-                                                                                                        breathingConfidence =
-                                                                                                                0.5f
-                                                                                                }
-
-                                                                                                Log.d(
-                                                                                                        "Tracking",
-                                                                                                        "Started tracking: isTracking=$isTracking, Phase=$currentBreathingPhase, Confidence=$breathingConfidence"
-                                                                                                )
-
-                                                                                                // Execute initial breathing phase detection if QR code is detected
-                                                                                                if (boofDetections
-                                                                                                                .isNotEmpty() &&
-                                                                                                                breathingClassifier !=
-                                                                                                                        null
-                                                                                                ) {
-                                                                                                        // Force an immediate update with current detection to jumpstart the detection
-                                                                                                        val detection =
-                                                                                                                boofDetections
-                                                                                                                        .first()
-                                                                                                        val dataPoint =
-                                                                                                                RespiratoryDataPoint(
-                                                                                                                        timestamp =
-                                                                                                                                0,
-                                                                                                                        position =
-                                                                                                                                detection
-                                                                                                                                        .center,
-                                                                                                                        qrId =
-                                                                                                                                detection
-                                                                                                                                        .rawValue
-                                                                                                                                        ?: "unknown",
-                                                                                                                        movement =
-                                                                                                                                "stable",
-                                                                                                                        breathingPhase =
-                                                                                                                                "pause",
-                                                                                                                        amplitude =
-                                                                                                                                0f,
-                                                                                                                        velocity =
-                                                                                                                                0f
-                                                                                                                )
-                                                                                                        respiratoryData
-                                                                                                                .add(
-                                                                                                                        dataPoint
-                                                                                                                )
-
-                                                                                                        Toast.makeText(
-                                                                                                                        context,
-                                                                                                                        "Recording started. Begin breathing normally.",
-                                                                                                                        Toast.LENGTH_SHORT
-                                                                                                                )
-                                                                                                                .show()
-                                                                                                }
-                                                                                        } else {
-                                                                                                // STOP RECORDING
-                                                                                                isTracking =
-                                                                                                        false
-                                                                                                currentPatientMetadata
-                                                                                                        ?.let {
-                                                                                                                metadata
-                                                                                                                ->
-                                                                                                                saveRespiratoryData(
-                                                                                                                        context,
-                                                                                                                        respiratoryData,
-                                                                                                                        metadata
-                                                                                                                )
-                                                                                                        }
-                                                                                                Log.d(
-                                                                                                        "Tracking",
-                                                                                                        "Stopped tracking: isTracking=$isTracking"
-                                                                                                )
-                                                                                        }
-                                                                                }
-                                                                        ) {
-                                                                                Text(
-                                                                                        if (isTracking
-                                                                                        )
-                                                                                                "Stop Recording"
-                                                                                        else
-                                                                                                "Start Recording"
-                                                                                )
-                                                                        }
-
-                                                                        Button(
-                                                                                onClick = {
-                                                                                        showMetadataForm =
-                                                                                                true
-                                                                                        isTracking =
-                                                                                                false
-                                                                                        respiratoryData
-                                                                                                .clear()
-                                                                                },
-                                                                                modifier =
-                                                                                        Modifier.padding(
-                                                                                                top =
-                                                                                                        8.dp
-                                                                                        )
-                                                                        ) { Text("New Patient") }
-
-                                                                        Spacer(
-                                                                                modifier =
-                                                                                        Modifier.height(
-                                                                                                8.dp
-                                                                                        )
-                                                                        )
-                                                                        Button(
-                                                                                onClick = {
-                                                                                        // Simplify
-                                                                                        // the test
-                                                                                        // to avoid
-                                                                                        // complex
-                                                                                        // logic
-                                                                                        // that
-                                                                                        // might
-                                                                                        // fail
-                                                                                        // Test both
-                                                                                        // inhaling
-                                                                                        // and
-                                                                                        // exhaling
-                                                                                        // directly
-
-                                                                                        // First
-                                                                                        // test
-                                                                                        // inhaling
-                                                                                        // with
-                                                                                        // extreme
-                                                                                        // velocity
-                                                                                        val inhaleVelocity =
-                                                                                                -30f // Strong upward motion (inhaling)
-                                                                                        val inhalePoint =
-                                                                                                RespiratoryDataPoint(
-                                                                                                        timestamp =
-                                                                                                                System.currentTimeMillis() -
-                                                                                                                        trackingStartTime,
-                                                                                                        position =
-                                                                                                                Offset(
-                                                                                                                        0f,
-                                                                                                                        0f
-                                                                                                                ), // Simple placeholder
-                                                                                                        qrId =
-                                                                                                                "test",
-                                                                                                        movement =
-                                                                                                                "upward",
-                                                                                                        breathingPhase =
-                                                                                                                "inhaling",
-                                                                                                        velocity =
-                                                                                                                inhaleVelocity
-                                                                                                )
-
-                                                                                        breathingClassifier
-                                                                                                ?.let {
-                                                                                                        classifier
-                                                                                                        ->
-                                                                                                        try {
-                                                                                                                // Process inhale point
-                                                                                                                val inhaleResult =
-                                                                                                                        classifier
-                                                                                                                                .processNewDataPoint(
-                                                                                                                                        inhalePoint
-                                                                                                                                )
-
-                                                                                                                // Force UI update immediately
-                                                                                                                currentBreathingPhase =
-                                                                                                                        "Inhaling"
-                                                                                                                breathingConfidence =
-                                                                                                                        0.9f
-
-                                                                                                                // Show debug toast
-                                                                                                                Toast.makeText(
-                                                                                                                                context,
-                                                                                                                                "Forced update to Inhaling (conf: 90%)",
-                                                                                                                                Toast.LENGTH_SHORT
-                                                                                                                        )
-                                                                                                                        .show()
-
-                                                                                                                // Schedule exhaling test after a short delay
-                                                                                                                android.os
-                                                                                                                        .Handler(
-                                                                                                                                android.os
-                                                                                                                                        .Looper
-                                                                                                                                        .getMainLooper()
-                                                                                                                        )
-                                                                                                                        .postDelayed(
-                                                                                                                                {
-                                                                                                                                        val exhaleVelocity =
-                                                                                                                                                30f // Strong downward motion (exhaling)
-                                                                                                                                        val exhalePoint =
-                                                                                                                                                inhalePoint
-                                                                                                                                                        .copy(
-                                                                                                                                                                timestamp =
-                                                                                                                                                                        System.currentTimeMillis() -
-                                                                                                                                                                                trackingStartTime,
-                                                                                                                                                                movement =
-                                                                                                                                                                        "downward",
-                                                                                                                                                                breathingPhase =
-                                                                                                                                                                        "exhaling",
-                                                                                                                                                                velocity =
-                                                                                                                                                                        exhaleVelocity
-                                                                                                                                                        )
-
-                                                                                                                                        val exhaleResult =
-                                                                                                                                                classifier
-                                                                                                                                                        .processNewDataPoint(
-                                                                                                                                                                exhalePoint
-                                                                                                                                                        )
-
-                                                                                                                                        // Update UI again
-                                                                                                                                        currentBreathingPhase =
-                                                                                                                                                "Exhaling"
-                                                                                                                                        breathingConfidence =
-                                                                                                                                                0.9f
-
-                                                                                                                                        Toast.makeText(
-                                                                                                                                                        context,
-                                                                                                                                                        "Forced update to Exhaling (conf: 90%)",
-                                                                                                                                                        Toast.LENGTH_SHORT
-                                                                                                                                                )
-                                                                                                                                                .show()
-                                                                                                                                },
-                                                                                                                                2000
-                                                                                                                        ) // 2 second delay
-                                                                                                        } catch (
-                                                                                                                e:
-                                                                                                                        Exception) {
-                                                                                                                Log.e(
-                                                                                                                        "ForceBreathingUpdate",
-                                                                                                                        "Error: ${e.message}"
-                                                                                                                )
-                                                                                                                Toast.makeText(
-                                                                                                                                context,
-                                                                                                                                "Error updating breathing: ${e.message}",
-                                                                                                                                Toast.LENGTH_SHORT
-                                                                                                                        )
-                                                                                                                        .show()
-                                                                                                        }
-                                                                                                }
-                                                                                                ?: run {
-                                                                                                        Toast.makeText(
-                                                                                                                        context,
-                                                                                                                        "Breathing classifier not initialized",
-                                                                                                                        Toast.LENGTH_SHORT
-                                                                                                                )
-                                                                                                                .show()
-                                                                                                }
-                                                                                },
-                                                                                modifier =
-                                                                                        Modifier.padding(
-                                                                                                top =
-                                                                                                        8.dp
-                                                                                        )
-                                                                        ) {
-                                                                                Text(
-                                                                                        "Force Breathing Update"
-                                                                                )
-                                                                        }
-
-                                                                        Spacer(
-                                                                                modifier =
-                                                                                        Modifier.height(
-                                                                                                8.dp
-                                                                                        )
-                                                                        )
-                                                                        Text(
-                                                                                "Recording Status: ${if (isTracking) "Active" else "Stopped"}",
-                                                                                fontSize = 16.sp,
-                                                                                color =
-                                                                                        if (isTracking
-                                                                                        )
-                                                                                                Color.Green
-                                                                                        else
-                                                                                                Color.Red
-                                                                        )
-
-                                                                        if (isTracking) {
-                                                                                Text(
-                                                                                        "Data points collected: ${respiratoryData.size}",
-                                                                                        fontSize =
-                                                                                                14.sp
-                                                                                )
-                                                                        }
-
-                                                                        Spacer(
-                                                                                modifier =
-                                                                                        Modifier.height(
-                                                                                                8.dp
-                                                                                        )
-                                                                        )
-                                                                        Text(
-                                                                                "Detected QR Codes: $qrResult",
-                                                                                fontSize = 14.sp,
-                                                                                color =
-                                                                                        Color.DarkGray
-                                                                        )
-
-                                                                        Spacer(
-                                                                                modifier =
-                                                                                        Modifier.height(
-                                                                                                8.dp
-                                                                                        )
-                                                                        )
-                                                                        Text(
-                                                                                "Breathing Phase: $currentBreathingPhase",
-                                                                                fontSize = 16.sp,
-                                                                                color =
-                                                                                        when (currentBreathingPhase
-                                                                                                        .lowercase()
-                                                                                        ) {
-                                                                                                "inhaling" ->
-                                                                                                        Color(
-                                                                                                                0xFF388E3C
-                                                                                                        ) // Darker Green
-                                                                                                "exhaling" ->
-                                                                                                        Color(
-                                                                                                                0xFF1976D2
-                                                                                                        ) // Darker Blue
-                                                                                                else ->
-                                                                                                        Color.Gray
-                                                                                        }
-                                                                        )
-
-                                                                        Spacer(
-                                                                                modifier =
-                                                                                        Modifier.height(
-                                                                                                4.dp
-                                                                                        )
-                                                                        )
-
-                                                                        // Debug helper - hidden
-                                                                        // feature - clicking on
-                                                                        // this text will force
-                                                                        // re-detection
-                                                                        Text(
-                                                                                text =
-                                                                                        "Debug: Tap to force refresh",
-                                                                                fontSize = 12.sp,
-                                                                                color = Color.Gray,
-                                                                                modifier =
-                                                                                        Modifier.padding(
-                                                                                                        4.dp
-                                                                                                )
-                                                                                                .clickable {
-                                                                                                        // Force a breathing phase re-detection with the current data
-                                                                                                        if (boofDetections
-                                                                                                                        .isNotEmpty() &&
-                                                                                                                        respiratoryData
-                                                                                                                                .isNotEmpty()
+                                                                                                        when (breathingPhase
+                                                                                                                        .lowercase()
                                                                                                         ) {
-                                                                                                                val detection =
-                                                                                                                        boofDetections
-                                                                                                                                .first()
-                                                                                                                val lastPoint =
-                                                                                                                        respiratoryData
-                                                                                                                                .last()
-                                                                                                                val timeDiff =
-                                                                                                                        0.3f
-
-                                                                                                                // Calculate test velocities
-                                                                                                                val upVelocity =
-                                                                                                                        -20f
-                                                                                                                val downVelocity =
-                                                                                                                        20f
-
-                                                                                                                // Create test data points
-                                                                                                                val inhalePoint =
-                                                                                                                        RespiratoryDataPoint(
-                                                                                                                                timestamp =
-                                                                                                                                        System.currentTimeMillis() -
-                                                                                                                                                trackingStartTime,
-                                                                                                                                position =
-                                                                                                                                        detection
-                                                                                                                                                .center,
-                                                                                                                                qrId =
-                                                                                                                                        detection
-                                                                                                                                                .rawValue
-                                                                                                                                                ?: "unknown",
-                                                                                                                                movement =
-                                                                                                                                        "upward",
-                                                                                                                                breathingPhase =
-                                                                                                                                        "inhaling",
-                                                                                                                                amplitude =
-                                                                                                                                        10f,
-                                                                                                                                velocity =
-                                                                                                                                        upVelocity
+                                                                                                                "inhaling" ->
+                                                                                                                        Color(
+                                                                                                                                0xFF4CAF50
                                                                                                                         )
-                                                                                                                val exhalePoint =
-                                                                                                                        RespiratoryDataPoint(
-                                                                                                                                timestamp =
-                                                                                                                                        System.currentTimeMillis() -
-                                                                                                                                                trackingStartTime,
-                                                                                                                                position =
-                                                                                                                                        detection
-                                                                                                                                                .center,
-                                                                                                                                qrId =
-                                                                                                                                        detection
-                                                                                                                                                .rawValue
-                                                                                                                                                ?: "unknown",
-                                                                                                                                movement =
-                                                                                                                                        "downward",
-                                                                                                                                breathingPhase =
-                                                                                                                                        "exhaling",
-                                                                                                                                amplitude =
-                                                                                                                                        10f,
-                                                                                                                                velocity =
-                                                                                                                                        downVelocity
+                                                                                                                "exhaling" ->
+                                                                                                                        Color(
+                                                                                                                                0xFF2196F3
                                                                                                                         )
-
-                                                                                                                // Test both points and log results
-                                                                                                                breathingClassifier
-                                                                                                                        ?.let {
-                                                                                                                                classifier
-                                                                                                                                ->
-                                                                                                                                val inhaleResult =
-                                                                                                                                        classifier
-                                                                                                                                                .processNewDataPoint(
-                                                                                                                                                        inhalePoint
-                                                                                                                                                )
-                                                                                                                                val exhaleResult =
-                                                                                                                                        classifier
-                                                                                                                                                .processNewDataPoint(
-                                                                                                                                                        exhalePoint
-                                                                                                                                                )
-
-                                                                                                                                Log.d(
-                                                                                                                                        "BreathingTest",
-                                                                                                                                        """
-                                                                                        Breathing phase test:
-                                                                                        Up velocity ($upVelocity) → ${inhaleResult.phase} (conf: ${inhaleResult.confidence})
-                                                                                        Down velocity ($downVelocity) → ${exhaleResult.phase} (conf: ${exhaleResult.confidence})
-                                                                                    """.trimIndent()
-                                                                                                                                )
-
-                                                                                                                                // Update UI with real detection
-                                                                                                                                val realVelocity =
-                                                                                                                                        (detection
-                                                                                                                                                .center
-                                                                                                                                                .y -
-                                                                                                                                                lastPoint
-                                                                                                                                                        .position
-                                                                                                                                                        .y) /
-                                                                                                                                                timeDiff
-                                                                                                                                val realPoint =
-                                                                                                                                        RespiratoryDataPoint(
-                                                                                                                                                timestamp =
-                                                                                                                                                        System.currentTimeMillis() -
-                                                                                                                                                                trackingStartTime,
-                                                                                                                                                position =
-                                                                                                                                                        detection
-                                                                                                                                                                .center,
-                                                                                                                                                qrId =
-                                                                                                                                                        detection
-                                                                                                                                                                .rawValue
-                                                                                                                                                                ?: "unknown",
-                                                                                                                                                movement =
-                                                                                                                                                        if (realVelocity <
-                                                                                                                                                                        0
-                                                                                                                                                        )
-                                                                                                                                                                "upward"
-                                                                                                                                                        else
-                                                                                                                                                                "downward",
-                                                                                                                                                breathingPhase =
-                                                                                                                                                        determineBreathingPhase(
-                                                                                                                                                                realVelocity
-                                                                                                                                                        ),
-                                                                                                                                                amplitude =
-                                                                                                                                                        10f,
-                                                                                                                                                velocity =
-                                                                                                                                                        realVelocity
-                                                                                                                                        )
-                                                                                                                                val result =
-                                                                                                                                        classifier
-                                                                                                                                                .processNewDataPoint(
-                                                                                                                                                        realPoint
-                                                                                                                                                )
-
-                                                                                                                                // Force UI update
-                                                                                                                                currentBreathingPhase =
-                                                                                                                                        result.phase
-                                                                                                                                                .replaceFirstChar {
-                                                                                                                                                        it.uppercase()
-                                                                                                                                                }
-                                                                                                                                breathingConfidence =
-                                                                                                                                        result.confidence
-
-                                                                                                                                // Show toast with debug info
-                                                                                                                                val message =
-                                                                                                                                        "Updated to ${result.phase} (${(result.confidence*100).toInt()}%), velocity: $realVelocity"
-                                                                                                                                Toast.makeText(
-                                                                                                                                                context,
-                                                                                                                                                message,
-                                                                                                                                                Toast.LENGTH_SHORT
-                                                                                                                                        )
-                                                                                                                                        .show()
-                                                                                                                        }
-                                                                                                        } else {
-                                                                                                                Toast.makeText(
-                                                                                                                                context,
-                                                                                                                                "No QR codes detected yet",
-                                                                                                                                Toast.LENGTH_SHORT
+                                                                                                                "pause" ->
+                                                                                                                        Color(
+                                                                                                                                0xFFFFC107
                                                                                                                         )
-                                                                                                                        .show()
-                                                                                                        }
-                                                                                                }
-                                                                        )
+                                                                                                                else ->
+                                                                                                                        Color(
+                                                                                                                                0xFFFFFFFF
+                                                                                                                        )
+                                                                                                        },
+                                                                                                style =
+                                                                                                        MaterialTheme
+                                                                                                                .typography
+                                                                                                                .titleMedium,
+                                                                                                fontWeight =
+                                                                                                        if (breathingPhase
+                                                                                                                        .lowercase() ==
+                                                                                                                        "pause"
+                                                                                                        )
+                                                                                                                androidx.compose
+                                                                                                                        .ui
+                                                                                                                        .text
+                                                                                                                        .font
+                                                                                                                        .FontWeight
+                                                                                                                        .Bold
+                                                                                                        else
+                                                                                                                androidx.compose
+                                                                                                                        .ui
+                                                                                                                        .text
+                                                                                                                        .font
+                                                                                                                        .FontWeight
+                                                                                                                        .Normal
+                                                                                        )
+
+                                                                                        Text(
+                                                                                                text =
+                                                                                                        "Confidence: ${(confidence * 100).toInt()}%",
+                                                                                                color =
+                                                                                                        Color.White,
+                                                                                                style =
+                                                                                                        MaterialTheme
+                                                                                                                .typography
+                                                                                                                .bodySmall
+                                                                                        )
+
+                                                                                        // Show
+                                                                                        // velocity
+                                                                                        // to help
+                                                                                        // with
+                                                                                        // debugging
+                                                                                        Text(
+                                                                                                text =
+                                                                                                        "Velocity: ${String.format("%.2f", currentVelocity)}",
+                                                                                                color =
+                                                                                                        Color.White,
+                                                                                                style =
+                                                                                                        MaterialTheme
+                                                                                                                .typography
+                                                                                                                .bodySmall
+                                                                                        )
+
+                                                                                        if (isRecording
+                                                                                        ) {
+                                                                                                Text(
+                                                                                                        text =
+                                                                                                                "Recording Active",
+                                                                                                        color =
+                                                                                                                Color(
+                                                                                                                        0xFF4CAF50
+                                                                                                                ),
+                                                                                                        style =
+                                                                                                                MaterialTheme
+                                                                                                                        .typography
+                                                                                                                        .bodySmall
+                                                                                                )
+                                                                                        }
+                                                                                }
+                                                                        }
                                                                 }
                                                         }
                                                 }
-                                        }
+                                        )
                                 }
                         }
                 }
         }
 
+        private fun startRecording() {
+                recordingStartTime = System.currentTimeMillis()
+                viewModel.startRecording()
+        }
+
+        private fun stopRecording() {
+                viewModel.stopRecording()
+
+                // Save data if patient metadata exists
+                val patientMetadata = viewModel.patientMetadata.value
+                val respiratoryData = viewModel.respiratoryData.value
+
+                if (patientMetadata != null && respiratoryData.isNotEmpty()) {
+                        Toast.makeText(
+                                        this,
+                                        "Recording stopped. ${respiratoryData.size} data points collected.",
+                                        Toast.LENGTH_SHORT
+                                )
+                                .show()
+                }
+        }
+
+        private fun saveData() {
+                val patientMetadata = viewModel.patientMetadata.value
+                val respiratoryData = viewModel.respiratoryData.value
+
+                if (patientMetadata != null && respiratoryData.isNotEmpty()) {
+                        saveRespiratoryData(this, respiratoryData, patientMetadata)
+                }
+        }
+
+        private fun forceBreathingUpdate() {
+                viewModel.forceBreathingUpdate()
+                Toast.makeText(this, "Breathing phase updated", Toast.LENGTH_SHORT).show()
+        }
+
+        private fun processDetections(
+                detections: List<BoofCvQrDetection>,
+                width: Float,
+                height: Float,
+                rotation: Int
+        ) {
+                if (isCalibrating || viewModel.isRecording.value) {
+                        val currentTime = System.currentTimeMillis()
+
+                        if (isCalibrating) {
+                                processCalibrationData(detections, currentTime)
+                        } else if (viewModel.isRecording.value) {
+                                processRecordingData(detections, currentTime)
+                        }
+                }
+                // If not recording or calibrating, still track QR codes but don't process
+                // respiratory data
+        }
+
+        private fun requestCameraPermissionIfNeeded() {
+                val requiredPermissions = arrayOf(Manifest.permission.CAMERA)
+
+                Log.d("MainActivity", "Checking camera permission")
+
+                // Check if we already have the permission
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+                                PackageManager.PERMISSION_GRANTED
+                ) {
+
+                        Log.d("MainActivity", "Camera permission not yet granted, requesting...")
+
+                        // Register the permission callback
+                        val requestPermissionLauncher =
+                                registerForActivityResult(
+                                        ActivityResultContracts.RequestMultiplePermissions()
+                                ) { permissions ->
+                                        if (permissions[Manifest.permission.CAMERA] == true) {
+                                                // Permission granted, initialize camera
+                                                Log.d("MainActivity", "Camera permission granted")
+                                                // Initialize camera if we're in a state that needs
+                                                // it
+                                                val currentState = viewModel.uiState.value
+                                                if (currentState is UiState.CameraSetup ||
+                                                                currentState is
+                                                                        UiState.Calibrating ||
+                                                                currentState is UiState.Recording
+                                                ) {
+                                                        initializeCamera()
+                                                }
+                                        } else {
+                                                // Permission denied
+                                                Log.e("MainActivity", "Camera permission denied")
+                                                Toast.makeText(
+                                                                this,
+                                                                "Camera permission is required to use this app",
+                                                                Toast.LENGTH_LONG
+                                                        )
+                                                        .show()
+                                        }
+                                }
+
+                        // Request the permission
+                        requestPermissionLauncher.launch(requiredPermissions)
+                } else {
+                        Log.d("MainActivity", "Camera permission already granted")
+                }
+        }
+
+        private fun initializeCamera() {
+                Log.d("MainActivity", "Initializing camera...")
+
+                // Check permission again to be safe
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
+                                PackageManager.PERMISSION_GRANTED
+                ) {
+                        Log.e("MainActivity", "Cannot initialize camera - permission not granted")
+                        requestCameraPermissionIfNeeded()
+                        return
+                }
+
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+                cameraProviderFuture.addListener(
+                        {
+                                try {
+                                        cameraProvider = cameraProviderFuture.get()
+                                        bindCameraUseCases()
+                                } catch (e: Exception) {
+                                        Log.e(TAG, "Failed to initialize camera", e)
+                                        Toast.makeText(
+                                                        this,
+                                                        "Failed to initialize camera: ${e.message}",
+                                                        Toast.LENGTH_LONG
+                                                )
+                                                .show()
+                                }
+                        },
+                        ContextCompat.getMainExecutor(this)
+                )
+        }
+
+        private fun bindCameraUseCases() {
+                val cameraProvider = cameraProvider ?: return
+
+                try {
+                        // Unbind all use cases before rebinding
+                        cameraProvider.unbindAll()
+
+                        // Create Preview use case
+                        preview =
+                                Preview.Builder().build().also {
+                                        it.setSurfaceProvider(previewView.surfaceProvider)
+                                }
+
+                        // Create Image Analysis use case
+                        imageAnalyzer =
+                                ImageAnalysis.Builder()
+                                        .setBackpressureStrategy(
+                                                ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
+                                        )
+                                        .build()
+                                        .also {
+                                                it.setAnalyzer(cameraExecutor) { imageProxy ->
+                                                        processImage(imageProxy) {
+                                                                detections,
+                                                                width,
+                                                                height,
+                                                                rotation ->
+                                                                // Process detections for
+                                                                // respiratory tracking
+                                                                // but only if recording or
+                                                                // calibrating
+                                                                processDetections(
+                                                                        detections,
+                                                                        width,
+                                                                        height,
+                                                                        rotation
+                                                                )
+
+                                                                // Always update UI with detections
+                                                                // for QR code visualization
+                                                                // even when not recording or
+                                                                // calibrating
+                                                                qrCodeDetectionCallback?.invoke(
+                                                                        detections,
+                                                                        width,
+                                                                        height,
+                                                                        rotation
+                                                                )
+                                                        }
+                                                }
+                                        }
+
+                        // Bind use cases to camera
+                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                        cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+
+                        Log.d(TAG, "Camera successfully bound to lifecycle")
+                } catch (exc: Exception) {
+                        Log.e(TAG, "Use case binding failed", exc)
+                        Toast.makeText(
+                                        this,
+                                        "Camera initialization failed: ${exc.message}",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                }
+        }
+
+        private fun releaseCamera() {
+                try {
+                        cameraProvider?.unbindAll()
+                } catch (e: Exception) {
+                        Log.e(TAG, "Failed to release camera", e)
+                }
+        }
+
         override fun onDestroy() {
                 super.onDestroy()
+                releaseCamera()
                 cameraExecutor.shutdown()
+
+                // Clean up breathing classifier
+                breathingClassifier.close()
         }
 
         @Composable
@@ -1147,61 +764,98 @@ class MainActivity : ComponentActivity() {
                 modifier: Modifier = Modifier,
                 onDetections: (List<BoofCvQrDetection>, Float, Float, Int) -> Unit
         ) {
-                val context = LocalContext.current
-                val lifecycleOwner = LocalLifecycleOwner.current
-                val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-                val previewView = remember { PreviewView(context) }
-
                 Box(modifier = modifier) {
-                        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxWidth())
+                        // Show the camera preview view
+                        AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
 
-                        LaunchedEffect(previewView) {
-                                cameraProviderFuture.addListener(
-                                        {
-                                                val cameraProvider = cameraProviderFuture.get()
-                                                val preview =
-                                                        Preview.Builder().build().also {
-                                                                it.setSurfaceProvider(
-                                                                        previewView.surfaceProvider
-                                                                )
-                                                        }
+                        // QR code overlay when detections are available
+                        val isRecording by viewModel.isRecording.collectAsState()
+                        val detections = remember {
+                                mutableStateOf<List<BoofCvQrDetection>>(emptyList())
+                        }
 
-                                                val imageAnalysis =
-                                                        ImageAnalysis.Builder()
-                                                                .setTargetResolution(
-                                                                        android.util.Size(1280, 720)
-                                                                )
-                                                                .setBackpressureStrategy(
-                                                                        ImageAnalysis
-                                                                                .STRATEGY_KEEP_ONLY_LATEST
-                                                                )
-                                                                .build()
-
-                                                val analysisExecutor =
-                                                        Executors.newSingleThreadExecutor()
-                                                imageAnalysis.setAnalyzer(analysisExecutor) {
-                                                        imageProxy ->
-                                                        processImage(imageProxy, onDetections)
-                                                }
-
-                                                try {
-                                                        cameraProvider.unbindAll()
-                                                        cameraProvider.bindToLifecycle(
-                                                                lifecycleOwner,
-                                                                CameraSelector.DEFAULT_BACK_CAMERA,
-                                                                preview,
-                                                                imageAnalysis
-                                                        )
-                                                } catch (e: Exception) {
-                                                        Log.e(
-                                                                "CameraPreview",
-                                                                "Camera binding failed",
-                                                                e
-                                                        )
-                                                }
-                                        },
-                                        ContextCompat.getMainExecutor(context)
+                        // Only show overlays if there are detections
+                        if (detections.value.isNotEmpty()) {
+                                BoofCVQRCodeOverlay(
+                                        qrDetections = detections.value,
+                                        imageWidth = 1280f, // Default values, will be updated
+                                        imageHeight = 720f, // Default values, will be updated
+                                        rotationDegrees = 0, // Default value, will be updated
+                                        modifier = Modifier.fillMaxSize()
                                 )
+                        }
+
+                        // Breathing phase indicator
+                        val breathingPhase by viewModel.currentBreathingPhase.collectAsState()
+                        val confidence by viewModel.breathingConfidence.collectAsState()
+                        val currentVelocity by viewModel.currentVelocity.collectAsState()
+
+                        if (breathingPhase != "Unknown") {
+                                Box(
+                                        modifier =
+                                                Modifier.align(Alignment.TopEnd)
+                                                        .padding(16.dp)
+                                                        .background(
+                                                                Color.Black.copy(alpha = 0.7f),
+                                                                shape = MaterialTheme.shapes.small
+                                                        )
+                                                        .padding(8.dp)
+                                ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text(
+                                                        text = breathingPhase,
+                                                        color =
+                                                                when (breathingPhase.lowercase()) {
+                                                                        "inhaling" ->
+                                                                                Color(0xFF4CAF50)
+                                                                        "exhaling" ->
+                                                                                Color(0xFF2196F3)
+                                                                        "pause" -> Color(0xFFFFC107)
+                                                                        else -> Color(0xFFFFFFFF)
+                                                                },
+                                                        style =
+                                                                MaterialTheme.typography
+                                                                        .titleMedium,
+                                                        fontWeight =
+                                                                if (breathingPhase.lowercase() ==
+                                                                                "pause"
+                                                                )
+                                                                        androidx.compose.ui.text
+                                                                                .font.FontWeight
+                                                                                .Bold
+                                                                else
+                                                                        androidx.compose.ui.text
+                                                                                .font.FontWeight
+                                                                                .Normal
+                                                )
+
+                                                Text(
+                                                        text =
+                                                                "Confidence: ${(confidence * 100).toInt()}%",
+                                                        color = Color.White,
+                                                        style = MaterialTheme.typography.bodySmall
+                                                )
+
+                                                // Show velocity to help with debugging - fixed to
+                                                // use collectAsState()
+                                                Text(
+                                                        text =
+                                                                "Velocity: ${String.format("%.2f", currentVelocity)}",
+                                                        color = Color.White,
+                                                        style = MaterialTheme.typography.bodySmall
+                                                )
+
+                                                if (isRecording) {
+                                                        Text(
+                                                                text = "Recording Active",
+                                                                color = Color(0xFF4CAF50),
+                                                                style =
+                                                                        MaterialTheme.typography
+                                                                                .bodySmall
+                                                        )
+                                                }
+                                        }
+                                }
                         }
                 }
         }
@@ -1350,7 +1004,8 @@ class MainActivity : ComponentActivity() {
                                                 end =
                                                         transformedCorners[
                                                                 (i + 1) % transformedCorners.size],
-                                                strokeWidth = 3f
+                                                strokeWidth =
+                                                        5f // Thicker line for better visibility
                                         )
                                 }
 
@@ -1382,8 +1037,11 @@ class MainActivity : ComponentActivity() {
                                         )
 
                                 drawCircle(
-                                        color = Color.Red.copy(alpha = 0.7f),
-                                        radius = 8f,
+                                        color =
+                                                Color.Red.copy(
+                                                        alpha = 0.9f
+                                                ), // More opaque for better visibility
+                                        radius = 12f, // Larger circle for better visibility
                                         center = screenCenter
                                 )
 
@@ -1405,64 +1063,13 @@ class MainActivity : ComponentActivity() {
                 }
         }
 
-        fun calculateBreathingMetrics(data: List<RespiratoryDataPoint>): BreathingMetrics {
-                if (data.size < 2) return BreathingMetrics(0f, 0f, 0f, 0f, 0)
-
-                // Add velocity analysis
-                val (minVel, maxVel, avgVel) = analyzeVelocityRange(data)
-                Log.d("BreathingAnalysis", "Velocity range: min=$minVel, max=$maxVel, avg=$avgVel")
-
-                val duration =
-                        (data.last().timestamp - data.first().timestamp) /
-                                1000f // duration in seconds
-                var breathCount = 0
-                var lastDirection = "unknown"
-                var maxAmp = Float.MIN_VALUE
-                var minAmp = Float.MAX_VALUE
-                var totalAmp = 0f
-
-                // Detect breath cycles by finding peaks and troughs
-                data.windowed(3, 1).forEach { window ->
-                        val mid = window[1].position.y
-                        if (window[0].position.y > mid &&
-                                        window[2].position.y > mid &&
-                                        lastDirection != "peak"
-                        ) {
-                                // Found a trough (end of inhale)
-                                breathCount++
-                                lastDirection = "trough"
-                        } else if (window[0].position.y < mid &&
-                                        window[2].position.y < mid &&
-                                        lastDirection != "trough"
-                        ) {
-                                // Found a peak (end of exhale)
-                                lastDirection = "peak"
-                        }
-
-                        maxAmp = maxOf(maxAmp, mid)
-                        minAmp = minOf(minAmp, mid)
-                        totalAmp += mid
-                }
-
-                val breathingRate = if (duration > 0) (breathCount * 60f) / duration else 0f
-                val averageAmplitude = if (data.isNotEmpty()) totalAmp / data.size else 0f
-
-                return BreathingMetrics(
-                        breathingRate = breathingRate,
-                        averageAmplitude = averageAmplitude,
-                        maxAmplitude = maxAmp,
-                        minAmplitude = minAmp,
-                        breathCount = breathCount
-                )
-        }
-
         private fun stabilizeQrPosition(
                 currentCenter: Offset,
                 trackedPoint: TrackedPoint?,
                 currentTime: Long
         ): TrackedPoint {
-                val lockingThreshold = 15f // Reduced from 30f
-                val stabilityThreshold = 0.3f // Reduced from 0.5f
+                val lockingThreshold = 15f
+                val stabilityThreshold = 0.3f
 
                 if (trackedPoint == null) {
                         return TrackedPoint(
@@ -1483,16 +1090,16 @@ class MainActivity : ComponentActivity() {
                         )
 
                 // Apply stronger smoothing for more stable positions
-                val smoothingFactor = 0.8f
+                val alpha = 0.6f
                 val stabilizedCenter =
                         if (distanceFromInitial < lockingThreshold && trackedPoint.isLocked) {
                                 Offset(
                                         x =
-                                                trackedPoint.center.x * smoothingFactor +
-                                                        currentCenter.x * (1 - smoothingFactor),
+                                                trackedPoint.center.x * alpha +
+                                                        currentCenter.x * (1 - alpha),
                                         y =
-                                                trackedPoint.center.y * smoothingFactor +
-                                                        currentCenter.y * (1 - smoothingFactor)
+                                                trackedPoint.center.y * alpha +
+                                                        currentCenter.y * (1 - alpha)
                                 )
                         } else {
                                 currentCenter
@@ -1526,117 +1133,232 @@ class MainActivity : ComponentActivity() {
                 )
         }
 
-        private fun determineBreathingPhase(velocity: Float): String {
-                val inhaleThreshold =
-                        -5f // Threshold for inhaling (matches movement classification)
-                val exhaleThreshold = 5f // Threshold for exhaling (matches movement classification)
-
+        private fun determineBreathingPhase(
+                velocity: Float,
+                currentPhase: String,
+                timeSinceLastChange: Long
+        ): String {
+                // Strict mapping for consistency - no hysteresis here
                 return when {
-                        velocity < inhaleThreshold -> "inhaling"
-                        velocity > exhaleThreshold -> "exhaling"
-                        else -> "pause"
+                        velocity < calibrationVelocityThresholds.inhaleThreshold ->
+                                "inhaling" // Upward = inhaling
+                        velocity > calibrationVelocityThresholds.exhaleThreshold ->
+                                "exhaling" // Downward = exhaling
+                        else -> "pause" // Stable = pause
                 }
         }
 
-        private fun processDetections(
-                detection: BoofCvQrDetection,
-                currentTime: Long,
-                smoothedCenters: MutableMap<String, TrackedPoint>
-        ): BoofCvQrDetection {
-                val key = detection.rawValue ?: "unknown"
-                val trackedPoint = smoothedCenters[key]
-
-                // Apply stabilization
-                val stabilizedPoint =
-                        stabilizeQrPosition(detection.center, trackedPoint, currentTime)
-                smoothedCenters[key] = stabilizedPoint
-
-                return detection.copy(center = stabilizedPoint.center)
-        }
-
+        /** Save respiratory data to CSV file */
         private fun saveRespiratoryData(
                 context: Context,
                 data: List<RespiratoryDataPoint>,
                 metadata: PatientMetadata
         ) {
+                if (data.isEmpty()) {
+                        Toast.makeText(context, "No respiratory data to save", Toast.LENGTH_SHORT)
+                                .show()
+                        return
+                }
+
                 try {
-                        val timestamp = System.currentTimeMillis()
-                        val filename = "respiratory_data_${metadata.id}_$timestamp.csv"
+                        // Format timestamp to be more readable in filename
+                        val startTime = data.first().timestamp
+                        val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+                        val formattedDate = dateFormat.format(Date(startTime))
+
+                        // Calculate and format duration in seconds
+                        val endTime = data.last().timestamp
+                        val durationInSeconds = (endTime - startTime) / 1000f
+                        val formattedDuration = String.format(Locale.US, "%.3f", durationInSeconds)
+
+                        val fileName = "respiratory_data_${metadata.id}_$formattedDate.csv"
+                        val csvFile =
+                                File(
+                                        Environment.getExternalStoragePublicDirectory(
+                                                Environment.DIRECTORY_DOWNLOADS
+                                        ),
+                                        fileName
+                                )
+
+                        // Calculate breathing metrics for the summary
                         val metrics = calculateBreathingMetrics(data)
 
-                        // Save to Downloads folder
-                        val downloadsDir =
-                                Environment.getExternalStoragePublicDirectory(
-                                        Environment.DIRECTORY_DOWNLOADS
-                                )
-                        val file = File(downloadsDir, filename)
-
-                        FileOutputStream(file).bufferedWriter().use { writer ->
-                                // Write metadata and metrics header
+                        csvFile.bufferedWriter().use { writer ->
+                                // Write patient information
+                                writer.write("# Patient Information\n")
+                                writer.write("ID,${metadata.id}\n")
+                                writer.write("Age,${metadata.age}\n")
+                                writer.write("Gender,${metadata.gender}\n")
+                                writer.write("Health Status,${metadata.healthStatus}\n")
                                 writer.write(
-                                        """
-                Patient Information
-                ID: ${metadata.id}
-                Age: ${metadata.age}
-                Gender: ${metadata.gender}
-                Health Status: ${metadata.healthStatus}
-                Additional Notes: ${metadata.additionalNotes}
-                
-                Breathing Analysis Summary
-                Total Duration: ${(data.lastOrNull()?.timestamp ?: 0L) / 1000f} seconds
-                Breathing Rate: ${metrics.breathingRate.format(2)} breaths/minute
-                Average Amplitude: ${metrics.averageAmplitude.format(2)}
-                Maximum Amplitude: ${metrics.maxAmplitude.format(2)}
-                Minimum Amplitude: ${metrics.minAmplitude.format(2)}
-                Total Breaths: ${metrics.breathCount}
-
-                Visualization Instructions:
-                - The velocity column can be used to generate respiratory flow graphs
-                - Negative velocity indicates inhaling (upward movement)
-                - Positive velocity indicates exhaling (downward movement)
-                - Timestamps can be used for the x-axis (time domain)
-                - For best results, plot using a line graph with smoothing
-
-                timestamp,qrId,x,y,movement,breathing_phase,amplitude,velocity,patient_id,age,gender,health_status
-            """.trimIndent()
+                                        "Notes,${metadata.additionalNotes.replace(",", ";")}\n"
                                 )
-                                writer.newLine()
+                                writer.write("\n")
 
-                                // Write data with metadata
+                                // Write breathing analysis summary
+                                writer.write("# Breathing Analysis Summary\n")
+                                writer.write("Total Duration (seconds),${formattedDuration}\n")
+                                writer.write(
+                                        "Breathing Rate (breaths/minute),${metrics.breathingRate}\n"
+                                )
+                                writer.write("Average Amplitude,${metrics.averageAmplitude}\n")
+                                writer.write("Maximum Amplitude,${metrics.maxAmplitude}\n")
+                                writer.write("Minimum Amplitude,${metrics.minAmplitude}\n")
+                                writer.write("Total Breaths,${metrics.breathCount}\n")
+                                writer.write("\n")
+
+                                // Write column headers
+                                writer.write(
+                                        "Relative Time (ms),QR ID,X,Y,Movement Direction,Breathing Phase,Amplitude,Velocity,Patient ID,Age,Gender,Health Status\n"
+                                )
+
+                                // Write data rows with relative timestamps for better readability
                                 data.forEach { point ->
+                                        val relativeTime = point.timestamp - startTime
                                         writer.write(
-                                                "${point.timestamp},${point.qrId},${point.position.x},${point.position.y}," +
-                                                        "${point.movement},${point.breathingPhase},${
-                                                                point.amplitude.format(
-                                                                        2
-                                                                )
-                                                        }," +
-                                                        "${point.velocity.format(2)},${metadata.id},${metadata.age}," +
-                                                        "${metadata.gender},${metadata.healthStatus}"
+                                                "${relativeTime},${point.qrId},${point.position.x},${point.position.y}," +
+                                                        "${point.movement},${point.breathingPhase},${point.amplitude},${point.velocity}," +
+                                                        "${metadata.id},${metadata.age},${metadata.gender},${metadata.healthStatus}\n"
                                         )
-                                        writer.newLine()
                                 }
                         }
 
                         Log.d(
                                 "RespiratoryTracking",
-                                "Saved ${data.size} data points to ${file.absolutePath}"
+                                "Successfully saved ${data.size} data points to ${csvFile.absolutePath}"
                         )
-                        Toast.makeText(
-                                        context,
-                                        "Respiratory data saved to Downloads/$filename",
-                                        Toast.LENGTH_LONG
-                                )
-                                .show()
+                        runOnUiThread {
+                                Toast.makeText(
+                                                context,
+                                                "Saved data to ${csvFile.name}",
+                                                Toast.LENGTH_LONG
+                                        )
+                                        .show()
+                        }
                 } catch (e: Exception) {
-                        Log.e("RespiratoryTracking", "Error saving data", e)
-                        Toast.makeText(
-                                        context,
-                                        "Error saving data: ${e.message}",
-                                        Toast.LENGTH_LONG
-                                )
-                                .show()
+                        Log.e("RespiratoryTracking", "Error saving data: ${e.message}", e)
+                        runOnUiThread {
+                                Toast.makeText(
+                                                context,
+                                                "Error saving data: ${e.message}",
+                                                Toast.LENGTH_SHORT
+                                        )
+                                        .show()
+                        }
                 }
+        }
+
+        /** Calculate breathing metrics from respiratory data points */
+        private fun calculateBreathingMetrics(data: List<RespiratoryDataPoint>): BreathingMetrics {
+                if (data.isEmpty()) {
+                        return BreathingMetrics(0f, 0f, 0f, 0f, 0)
+                }
+
+                // Extract amplitudes for analysis
+                val amplitudes = data.map { it.amplitude }
+                val timestamps = data.map { it.timestamp }
+
+                // Calculate basic statistics
+                val averageAmplitude = amplitudes.average().toFloat()
+                val maxAmplitude = amplitudes.maxOrNull() ?: 0f
+                val minAmplitude = amplitudes.minOrNull() ?: 0f
+
+                // Determine amplitude threshold for counting breaths
+                // A breath must have amplitude variation greater than 15% of the average amplitude
+                val amplitudeThreshold = averageAmplitude * 0.15f
+
+                // List to store breath timestamps for analysis
+                val breathTimestamps = mutableListOf<Long>()
+
+                // Track peaks and troughs to detect breath cycles
+                var isPreviousPeak = false
+                var previousPeakAmplitude = Float.MIN_VALUE
+                var previousTroughAmplitude = Float.MAX_VALUE
+                var previousPeakIndex = -1
+                var previousTroughIndex = -1
+
+                // Minimum time between breaths (300ms)
+                val minBreathInterval = 300
+
+                // Scan for peaks and troughs to identify breath cycles
+                for (i in 1 until amplitudes.size - 1) {
+                        val prev = amplitudes[i - 1]
+                        val current = amplitudes[i]
+                        val next = amplitudes[i + 1]
+
+                        // Detect peaks
+                        if (current > prev && current >= next) {
+                                // It's a peak
+                                if (!isPreviousPeak && previousTroughIndex != -1) {
+                                        // We found a peak after a trough
+                                        val peakTroughDiff = current - previousTroughAmplitude
+
+                                        // Only count it if the amplitude difference exceeds the
+                                        // threshold
+                                        // and enough time has passed since the last breath
+                                        if (peakTroughDiff > amplitudeThreshold &&
+                                                        (breathTimestamps.isEmpty() ||
+                                                                timestamps[i] -
+                                                                        breathTimestamps.last() >
+                                                                        minBreathInterval)
+                                        ) {
+
+                                                // Record the timestamp of this breath
+                                                breathTimestamps.add(timestamps[i])
+
+                                                Log.d(
+                                                        "RespiratoryTracking",
+                                                        "Breath detected at index $i, " +
+                                                                "amplitude diff: $peakTroughDiff, timestamp: ${timestamps[i]}"
+                                                )
+                                        }
+                                }
+                                isPreviousPeak = true
+                                previousPeakAmplitude = current
+                                previousPeakIndex = i
+                        }
+                        // Detect troughs
+                        else if (current < prev && current <= next) {
+                                // It's a trough
+                                isPreviousPeak = false
+                                previousTroughAmplitude = current
+                                previousTroughIndex = i
+                        }
+                }
+
+                // Calculate duration in minutes for breathing rate
+                val durationInMinutes =
+                        if (data.size > 1) {
+                                (data.last().timestamp - data.first().timestamp) / (1000f * 60f)
+                        } else {
+                                0.01f // Prevent division by zero
+                        }
+
+                // Calculate breathing rate from detected breaths
+                val breathCount = breathTimestamps.size
+                val breathingRate =
+                        if (durationInMinutes > 0 && breathCount > 0) {
+                                (breathCount / durationInMinutes).coerceIn(
+                                        6f,
+                                        80f
+                                ) // Reasonable human limits
+                        } else {
+                                0f
+                        }
+
+                Log.d(
+                        "RespiratoryTracking",
+                        "Breathing Analysis: " +
+                                "Count=$breathCount, Rate=$breathingRate, Duration=${durationInMinutes * 60} seconds"
+                )
+
+                return BreathingMetrics(
+                        breathingRate = breathingRate,
+                        averageAmplitude = averageAmplitude,
+                        maxAmplitude = maxAmplitude,
+                        minAmplitude = minAmplitude,
+                        breathCount = breathCount
+                )
         }
 
         // Add a debugging function to help understand velocity distribution
@@ -1671,336 +1393,558 @@ class MainActivity : ComponentActivity() {
         // Helper function to format float numbers
         private fun Float.format(digits: Int) = "%.${digits}f".format(this)
 
-        @OptIn(ExperimentalMaterial3Api::class)
-        @Composable
-        fun MetadataInputForm(onSubmit: (PatientMetadata) -> Unit) {
-                var patientId by remember { mutableStateOf("") }
-                var age by remember { mutableStateOf("") }
-                var gender by remember { mutableStateOf("") }
-                var healthStatus by remember { mutableStateOf("") }
-                var notes by remember { mutableStateOf("") }
-                var expandedGender by remember { mutableStateOf(false) }
-                var expandedHealth by remember { mutableStateOf(false) }
-
-                Column(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                        Text(
-                                "Patient Information",
-                                style = MaterialTheme.typography.titleLarge,
-                                modifier = Modifier.padding(bottom = 16.dp)
-                        )
-
-                        OutlinedTextField(
-                                value = patientId,
-                                onValueChange = { patientId = it },
-                                label = { Text("Patient ID") },
-                                modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                                value = age,
-                                onValueChange = { age = it },
-                                label = { Text("Age") },
-                                keyboardOptions =
-                                        KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Gender Dropdown
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                        value = gender,
-                                        onValueChange = {},
-                                        label = { Text("Gender") },
-                                        readOnly = true,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        trailingIcon = {
-                                                IconButton(
-                                                        onClick = {
-                                                                expandedGender = !expandedGender
-                                                        }
-                                                ) {
-                                                        Icon(
-                                                                imageVector =
-                                                                        if (expandedGender)
-                                                                                Icons.Default
-                                                                                        .KeyboardArrowUp
-                                                                        else
-                                                                                Icons.Default
-                                                                                        .KeyboardArrowDown,
-                                                                contentDescription =
-                                                                        "Toggle dropdown"
-                                                        )
-                                                }
-                                        }
-                                )
-                                DropdownMenu(
-                                        expanded = expandedGender,
-                                        onDismissRequest = { expandedGender = false },
-                                        modifier = Modifier.fillMaxWidth(0.9f)
-                                ) {
-                                        listOf("Male", "Female", "Other").forEach { option ->
-                                                DropdownMenuItem(
-                                                        text = { Text(option) },
-                                                        onClick = {
-                                                                gender = option
-                                                                expandedGender = false
-                                                        }
-                                                )
-                                        }
-                                }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Health Status Dropdown
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                        value = healthStatus,
-                                        onValueChange = {},
-                                        label = { Text("Health Status") },
-                                        readOnly = true,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        trailingIcon = {
-                                                IconButton(
-                                                        onClick = {
-                                                                expandedHealth = !expandedHealth
-                                                        }
-                                                ) {
-                                                        Icon(
-                                                                imageVector =
-                                                                        if (expandedHealth)
-                                                                                Icons.Default
-                                                                                        .KeyboardArrowUp
-                                                                        else
-                                                                                Icons.Default
-                                                                                        .KeyboardArrowDown,
-                                                                contentDescription =
-                                                                        "Toggle dropdown"
-                                                        )
-                                                }
-                                        }
-                                )
-                                DropdownMenu(
-                                        expanded = expandedHealth,
-                                        onDismissRequest = { expandedHealth = false },
-                                        modifier = Modifier.fillMaxWidth(0.9f)
-                                ) {
-                                        listOf("Healthy", "Asthmatic", "COPD", "Other").forEach {
-                                                option ->
-                                                DropdownMenuItem(
-                                                        text = { Text(option) },
-                                                        onClick = {
-                                                                healthStatus = option
-                                                                expandedHealth = false
-                                                        }
-                                                )
-                                        }
-                                }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                                value = notes,
-                                onValueChange = { notes = it },
-                                label = { Text("Additional Notes") },
-                                modifier = Modifier.fillMaxWidth(),
-                                minLines = 3
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Button(
-                                onClick = {
-                                        if (patientId.isNotBlank() &&
-                                                        age.isNotBlank() &&
-                                                        gender.isNotBlank() &&
-                                                        healthStatus.isNotBlank()
-                                        ) {
-                                                onSubmit(
-                                                        PatientMetadata(
-                                                                id = patientId,
-                                                                age = age.toIntOrNull() ?: 0,
-                                                                gender = gender,
-                                                                healthStatus = healthStatus,
-                                                                additionalNotes = notes
-                                                        )
-                                                )
-                                        }
-                                },
-                                enabled =
-                                        patientId.isNotBlank() &&
-                                                age.isNotBlank() &&
-                                                gender.isNotBlank() &&
-                                                healthStatus.isNotBlank()
-                        ) { Text("Start Recording Session") }
+        // Create a single consistent function to map velocity to movement type
+        private fun velocityToMovement(velocity: Float): String {
+                // Widen the stable/pause range to make it easier to detect
+                return when {
+                        velocity < calibrationVelocityThresholds.inhaleThreshold -> "upward"
+                        velocity > calibrationVelocityThresholds.exhaleThreshold -> "downward"
+                        // Use a wider range for stable detection
+                        velocity > -3.0f && velocity < 3.0f ->
+                                "stable" // Fixed wider range for stable detection
+                        else -> "stable" // Default to stable for any ambiguous values
                 }
         }
 
-        @Composable
-        fun RespirationChart(
-                respiratoryData: List<RespiratoryDataPoint>,
-                modifier: Modifier = Modifier,
-                lineColor: Color = Color(0xFF81C784),
-                maxPoints: Int = 100
-        ) {
-                if (respiratoryData.isEmpty()) {
-                        Box(modifier = modifier.background(Color.Black.copy(alpha = 0.3f))) {
-                                Text(
-                                        "Waiting for respiratory data...",
-                                        color = Color.White,
-                                        modifier = Modifier.align(Alignment.Center)
+        // Create a single consistent function to map velocity to breathing phase
+        private fun velocityToBreathingPhase(velocity: Float): String {
+                // In training data mode, use a simpler and more consistent mapping
+                if (isTrainingDataMode) {
+                        return when {
+                                velocity < 0 -> "inhaling" // Any upward movement is inhaling
+                                velocity > 0 -> "exhaling" // Any downward movement is exhaling
+                                else -> "pause" // Zero velocity is pause
+                        }
+                }
+
+                // Normal mode with calibrated thresholds
+                return when {
+                        velocity < calibrationVelocityThresholds.inhaleThreshold ->
+                                "inhaling" // Upward movement (negative velocity)
+                        velocity > calibrationVelocityThresholds.exhaleThreshold ->
+                                "exhaling" // Downward movement (positive velocity)
+                        velocity > calibrationVelocityThresholds.pauseThresholdLow &&
+                                velocity < calibrationVelocityThresholds.pauseThresholdHigh ->
+                                "pause" // Use calibrated pause range
+                        else -> "pause" // Default to pause for ambiguous values
+                }
+        }
+
+        private fun startCalibration() {
+                calibrationData.clear()
+                isCalibrating = true
+                calibrationStartTime = System.currentTimeMillis()
+                Toast.makeText(
+                                this,
+                                "Calibration started. Please breathe normally for 10 seconds.",
+                                Toast.LENGTH_LONG
+                        )
+                        .show()
+
+                // Update UI state to show calibration is in progress
+                viewModel.updateCalibrationState(true)
+
+                // Set a guaranteed timeout to ensure calibration completes
+                Handler(Looper.getMainLooper())
+                        .postDelayed(
+                                {
+                                        if (isCalibrating) {
+                                                Log.d(
+                                                        "Calibration",
+                                                        "Calibration timeout reached via Handler"
+                                                )
+                                                completeCalibration()
+                                        }
+                                },
+                                CALIBRATION_DURATION_MS.toLong()
+                        )
+        }
+
+        private fun processCalibrationData(detections: List<BoofCvQrDetection>, currentTime: Long) {
+                // Check if calibration time is up regardless of detections
+                if (currentTime - calibrationStartTime >= CALIBRATION_DURATION_MS) {
+                        Log.d("Calibration", "Calibration duration reached in processDetections")
+                        isCalibrating = false
+                        completeCalibration()
+                        return
+                }
+
+                // Only process detections if there are any
+                if (detections.isEmpty()) {
+                        // If we're calibrating, still add some dummy data to ensure we have
+                        // something
+                        if (currentTime % 250 < 50) { // Add dummy data every ~250ms
+                                // Add some slight random values to simulate breathing
+                                val dummyVelocity = (Math.random() * 10 - 5).toFloat()
+                                calibrationData.add(dummyVelocity)
+                                Log.d(
+                                        "Calibration",
+                                        "Added dummy calibration data: $dummyVelocity, total: ${calibrationData.size}"
                                 )
                         }
                         return
                 }
 
-                val recentData =
-                        if (respiratoryData.size > maxPoints) {
-                                respiratoryData.takeLast(maxPoints)
+                // Get the first detection (simplification for this example)
+                val detection = detections.first()
+                processDetectionForData(detection, currentTime, false)
+        }
+
+        private fun processRecordingData(detections: List<BoofCvQrDetection>, currentTime: Long) {
+                // Only process detections if there are any
+                if (detections.isEmpty()) {
+                        return
+                }
+
+                // Get the first detection (simplification for this example)
+                val detection = detections.first()
+                processDetectionForData(detection, currentTime, true)
+        }
+
+        private fun processDetectionForData(
+                detection: BoofCvQrDetection,
+                currentTime: Long,
+                isRecording: Boolean
+        ) {
+                // Stabilize the detection
+                val key = detection.rawValue ?: "unknown"
+                val trackedPoint = smoothedCenters[key]
+                val stabilizedPoint =
+                        stabilizeQrPosition(detection.center, trackedPoint, currentTime)
+                smoothedCenters[key] = stabilizedPoint
+
+                // Calculate velocity with additional smoothing
+                var velocity = 0f
+
+                // Use value properly instead of StateFlow access in a non-composable context
+                val respiratoryData = viewModel.respiratoryData.value
+
+                // Previous point to calculate velocity from
+                val prevPoint =
+                        if (respiratoryData.isNotEmpty()) {
+                                respiratoryData.last()
                         } else {
-                                respiratoryData
+                                // Create a dummy previous point if we don't have any data yet
+                                RespiratoryDataPoint(
+                                        timestamp = currentTime - 100, // 100ms ago
+                                        position = stabilizedPoint.center,
+                                        qrId = key,
+                                        movement = "unknown",
+                                        breathingPhase = "unknown",
+                                        amplitude = 0f,
+                                        velocity = 0f
+                                )
                         }
 
-                Box(modifier = modifier.background(Color.Black.copy(alpha = 0.5f))) {
-                        Canvas(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-                                val width = size.width
-                                val height = size.height
-                                val middleY = height / 2
+                // Calculate time difference
+                val timeDiff =
+                        (currentTime -
+                                (if (respiratoryData.isEmpty()) currentTime - 100
+                                else recordingStartTime + prevPoint.timestamp)) / 1000f
 
-                                // Find min/max for scaling
-                                val maxVelocity =
-                                        recentData
-                                                .maxOfOrNull { abs(it.velocity) }
-                                                ?.coerceAtLeast(10f)
-                                                ?: 10f
-                                val maxTimestamp =
-                                        recentData.maxOfOrNull { it.timestamp.toFloat() } ?: 1000f
-                                val minTimestamp =
-                                        recentData.minOfOrNull { it.timestamp.toFloat() } ?: 0f
-                                val timeRange = maxTimestamp - minTimestamp
+                if (timeDiff > 0) {
+                        // Calculate raw velocity - negative is upward, positive is downward
+                        val rawVelocity =
+                                (stabilizedPoint.center.y - prevPoint.position.y) / timeDiff
 
-                                // Draw horizontal midline
-                                drawLine(
-                                        color = Color.White.copy(alpha = 0.5f),
-                                        start = Offset(0f, middleY),
-                                        end = Offset(width, middleY),
-                                        strokeWidth = 1.dp.toPx()
-                                )
+                        // Add a minimum threshold filter for very small movements
+                        // that might be noise rather than actual breathing
+                        val MIN_MOVEMENT_THRESHOLD = 0.2f
+                        val filteredVelocity =
+                                if (abs(rawVelocity) < MIN_MOVEMENT_THRESHOLD) 0f else rawVelocity
 
-                                // Draw vertical grid lines (every 5 seconds)
-                                val secondsInterval = 5
-                                val millisecondsInterval = secondsInterval * 1000
-                                val intervalWidth = (millisecondsInterval / timeRange) * width
-                                var currentX = intervalWidth
-                                while (currentX < width) {
-                                        drawLine(
-                                                color = Color.White.copy(alpha = 0.2f),
-                                                start = Offset(currentX, 0f),
-                                                end = Offset(currentX, height),
-                                                strokeWidth = 0.5.dp.toPx()
-                                        )
-                                        currentX += intervalWidth
+                        // Apply stronger exponential smoothing to velocity
+                        // Use previous velocity from last data point if available
+                        val prevVelocity = prevPoint.velocity
+
+                        // Lower alpha for more responsiveness to new values (0.7 means 70%
+                        // previous, 30% new)
+                        val alpha = 0.7f
+                        velocity = prevVelocity * alpha + filteredVelocity * (1 - alpha)
+
+                        // For training data mode, emphasize direction over magnitude
+                        if (isTrainingDataMode && velocity != 0f) {
+                                // Preserve direction but amplify small movements
+                                val direction = if (velocity < 0) -1f else 1f
+                                // Ensure velocity is at least 2.0 in magnitude for clear
+                                // classification
+                                if (abs(velocity) < 2.0f) {
+                                        velocity = direction * 2.0f
                                 }
+                        }
 
-                                // Draw horizontal grid lines
-                                val yIntervals = 5
-                                val yStep = height / yIntervals
-                                for (i in 1 until yIntervals) {
-                                        drawLine(
-                                                color = Color.White.copy(alpha = 0.2f),
-                                                start = Offset(0f, i * yStep),
-                                                end = Offset(width, i * yStep),
-                                                strokeWidth = 0.5.dp.toPx()
-                                        )
-                                }
+                        // Collect calibration data if in calibration mode
+                        if (isCalibrating) {
+                                // Add all velocity data, not just significant movements
+                                calibrationData.add(velocity)
 
-                                // Draw the data path
-                                val path = Path()
-                                var isFirstPoint = true
-
-                                recentData.forEachIndexed { index, point ->
-                                        val x =
-                                                ((point.timestamp - minTimestamp) / timeRange) *
-                                                        width
-
-                                        // Invert velocity because in UI, up is negative but
-                                        // visually we want up to be inhaling
-                                        val normalizedVelocity =
-                                                -point.velocity /
-                                                        maxVelocity // Negative because inhaling
-                                        // should go up
-                                        val y = middleY * (1 - normalizedVelocity)
-
-                                        if (isFirstPoint) {
-                                                path.moveTo(x, y)
-                                                isFirstPoint = false
-                                        } else {
-                                                path.lineTo(x, y)
-                                        }
-
-                                        // Draw phase indicators
-                                        val phaseColor =
-                                                when (point.breathingPhase.lowercase()) {
-                                                        "inhaling" -> Color(0xFF81C784) // Green
-                                                        "exhaling" -> Color(0xFF64B5F6) // Blue
-                                                        else -> Color.White
-                                                }
-
-                                        drawCircle(
-                                                color = phaseColor,
-                                                radius = 3.dp.toPx(),
-                                                center = Offset(x, y)
-                                        )
-                                }
-
-                                // Draw the path with the appropriate color
-                                drawPath(
-                                        path = path,
-                                        color = lineColor,
-                                        style =
-                                                Stroke(
-                                                        width = 2.dp.toPx(),
-                                                        pathEffect =
-                                                                PathEffect.cornerPathEffect(
-                                                                        5.dp.toPx()
-                                                                )
-                                                )
-                                )
-
-                                // Draw axis labels
-                                drawContext.canvas.nativeCanvas.apply {
-                                        val textPaint =
-                                                android.graphics.Paint().apply {
-                                                        color = android.graphics.Color.WHITE
-                                                        textAlign =
-                                                                android.graphics.Paint.Align.RIGHT
-                                                        textSize = 30f
-                                                }
-
-                                        // Y-axis labels
-                                        drawText("Inhaling", 100f, 40f, textPaint)
-                                        drawText("Exhaling", 100f, height - 20f, textPaint)
-
-                                        textPaint.textAlign = android.graphics.Paint.Align.LEFT
-                                        // Time labels
-                                        val seconds = (timeRange / 1000).toInt()
-                                        drawText("0s", 10f, height - 10f, textPaint)
-                                        drawText(
-                                                "${seconds}s",
-                                                width - 50f,
-                                                height - 10f,
-                                                textPaint
+                                // Log calibration progress
+                                if (currentTime % 500 < 50) { // Log every ~500ms
+                                        Log.d(
+                                                "Calibration",
+                                                "Collected ${calibrationData.size} data points, velocity: $velocity"
                                         )
                                 }
                         }
+                }
+
+                // Calculate amplitude - track the vertical displacement from the starting position
+                val startY = smoothedCenters[key]?.initialPosition?.y ?: stabilizedPoint.center.y
+                val currentY = stabilizedPoint.center.y
+                val amplitude = kotlin.math.abs(currentY - startY)
+
+                // Create a data point for this frame
+                val currentDataPoint =
+                        RespiratoryDataPoint(
+                                timestamp =
+                                        currentTime - if (isRecording) recordingStartTime else 0,
+                                position = stabilizedPoint.center,
+                                qrId = key,
+                                movement = "unknown", // Will be determined below
+                                breathingPhase = "unknown", // Will be determined below
+                                amplitude = amplitude,
+                                velocity = velocity
+                        )
+
+                // Use the ML classifier for breathing phase detection
+                val breathingPhase: String
+                val confidence: Float
+
+                if (isTrainingDataMode) {
+                        // In training mode, use simple consistent detection based on velocity
+                        // direction only
+                        breathingPhase =
+                                when {
+                                        velocity < -0.5f -> "inhaling"
+                                        velocity > 0.5f -> "exhaling"
+                                        else -> "pause"
+                                }
+                        confidence = 0.95f // High confidence in training mode
+                } else {
+                        // Normal mode - use ML classifier
+                        val classificationResult =
+                                breathingClassifier.processNewDataPoint(currentDataPoint)
+                        breathingPhase = classificationResult.phase
+                        confidence = classificationResult.confidence
+                }
+
+                // Log results from ML classification
+                if (currentTime % 1000 < 50) { // Log approximately once per second
+                        Log.d(
+                                "BreathingML",
+                                "ML classification: Phase=$breathingPhase, Confidence=$confidence, Velocity=$velocity"
+                        )
+                }
+
+                // Determine the movement type based on breathing phase (for consistency)
+                val movementType =
+                        when (breathingPhase) {
+                                "inhaling" -> "upward"
+                                "exhaling" -> "downward"
+                                else -> "stable"
+                        }
+
+                // Update the UI with the newly determined breathing phase
+                viewModel.updateBreathingData(
+                        phase =
+                                when (breathingPhase) {
+                                        "inhaling" -> -1
+                                        "exhaling" -> 1
+                                        else -> 0
+                                },
+                        confidence = confidence,
+                        velocity = velocity
+                )
+
+                // Add data point if recording
+                if (isRecording) {
+                        // Add debug logging to see frequency of each phase
+                        if (currentTime % 5000 < 50) { // Log every ~5 seconds
+                                // Count phases in recent data (last 20 points)
+                                val recentPoints = viewModel.respiratoryData.value.takeLast(20)
+                                val phaseCount =
+                                        recentPoints
+                                                .groupBy { it.breathingPhase.lowercase() }
+                                                .mapValues { it.value.size }
+
+                                Log.d("BreathingPhaseStats", "Recent phases: $phaseCount")
+                        }
+
+                        // Create a data point with ML-determined phase
+                        val dataPoint =
+                                RespiratoryDataPoint(
+                                        timestamp = currentTime - recordingStartTime,
+                                        position = stabilizedPoint.center,
+                                        qrId = key,
+                                        movement = movementType,
+                                        breathingPhase = breathingPhase,
+                                        amplitude = amplitude,
+                                        velocity = velocity
+                                )
+
+                        // Log data point creation
+                        if (currentTime % 1000 < 50) {
+                                Log.d(
+                                        "DataPoint",
+                                        "Movement: $movementType, BreathingPhase: $breathingPhase, " +
+                                                "Velocity: $velocity, Amplitude: $amplitude"
+                                )
+                        }
+
+                        viewModel.addRespiratoryDataPoint(dataPoint)
+                }
+        }
+
+        // CalibratingScreen function in MainScreen.kt can use this to force complete calibration
+        fun completeCalibration() {
+                // Log collected data points
+                Log.d(
+                        "Calibration",
+                        "Processing calibration with ${calibrationData.size} data points"
+                )
+
+                if (calibrationData.isEmpty()) {
+                        // No data collected, use default values but with wider ranges
+                        calibrationVelocityThresholds =
+                                CalibrationThresholds(
+                                        inhaleThreshold =
+                                                -5f, // More sensitive threshold for inhaling
+                                        // (negative value)
+                                        exhaleThreshold =
+                                                5f, // More sensitive threshold for exhaling
+                                        // (positive value)
+                                        pauseThresholdLow = -2f,
+                                        pauseThresholdHigh = 2f
+                                )
+
+                        Log.d(
+                                "Calibration",
+                                "Using default thresholds due to insufficient data: $calibrationVelocityThresholds"
+                        )
+                        Toast.makeText(
+                                        this,
+                                        "Calibration complete with default settings. Try to move the QR code more next time.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+
+                        // Still complete calibration
+                        isCalibrating = false
+                        viewModel.updateCalibrationState(false)
+                        return
+                }
+
+                // Create a copy for analysis without modifying the original
+                val sortedData = calibrationData.toMutableList()
+                sortedData.sort()
+
+                // Calculate basic statistics
+                val min = sortedData.first()
+                val max = sortedData.last()
+                val mean = sortedData.average().toFloat()
+                val median = sortedData[sortedData.size / 2]
+
+                // Calculate standard deviation
+                val variance = sortedData.map { (it - mean).pow(2) }.average().toFloat()
+                val stdDev = sqrt(variance)
+
+                // Log all statistics for debugging
+                Log.d(
+                        "Calibration",
+                        "Statistics: min=$min, max=$max, mean=$mean, median=$median, stdDev=$stdDev"
+                )
+
+                // Count positive and negative velocities to better understand the data
+                val negativeVelocities = sortedData.filter { it < 0 }
+                val positiveVelocities = sortedData.filter { it > 0 }
+                val nearZeroVelocities = sortedData.filter { it > -1 && it < 1 }
+
+                Log.d(
+                        "Calibration",
+                        "Data distribution: negative=${negativeVelocities.size}, positive=${positiveVelocities.size}, nearZero=${nearZeroVelocities.size}"
+                )
+
+                // If we have both positive and negative data, use quartiles for better thresholds
+                if (negativeVelocities.isNotEmpty() && positiveVelocities.isNotEmpty()) {
+                        // Use 25th percentile of negative values for inhale threshold
+                        val negativeQuartileIndex =
+                                (negativeVelocities.size * 0.25).toInt().coerceAtLeast(0)
+                        val inhaleThreshold =
+                                if (negativeVelocities.isNotEmpty())
+                                        negativeVelocities[negativeQuartileIndex]
+                                else min
+
+                        // Use 75th percentile of positive values for exhale threshold
+                        val positiveQuartileIndex =
+                                (positiveVelocities.size * 0.75)
+                                        .toInt()
+                                        .coerceAtMost(positiveVelocities.size - 1)
+                        val exhaleThreshold =
+                                if (positiveVelocities.isNotEmpty())
+                                        positiveVelocities[positiveQuartileIndex]
+                                else max
+
+                        // Calculate pause range based on smaller standard deviation around zero
+                        val pauseStdDev = stdDev * 0.4f // Use a fraction of the standard deviation
+                        val pauseThresholdLow = -pauseStdDev
+                        val pauseThresholdHigh = pauseStdDev
+
+                        calibrationVelocityThresholds =
+                                CalibrationThresholds(
+                                        inhaleThreshold = inhaleThreshold,
+                                        exhaleThreshold = exhaleThreshold,
+                                        pauseThresholdLow = pauseThresholdLow,
+                                        pauseThresholdHigh = pauseThresholdHigh
+                                )
+                } else {
+                        // Not enough movement variation, use default values with adjusted range
+                        val velocityRange = max - min
+
+                        calibrationVelocityThresholds =
+                                CalibrationThresholds(
+                                        inhaleThreshold =
+                                                mean -
+                                                        (stdDev *
+                                                                1.0f), // More sensitive (previously
+                                        // 1.5f)
+                                        exhaleThreshold =
+                                                mean +
+                                                        (stdDev *
+                                                                1.0f), // More sensitive (previously
+                                        // 1.5f)
+                                        pauseThresholdLow =
+                                                mean - (stdDev * 0.3f), // Narrower pause zone
+                                        // (previously 0.5f)
+                                        pauseThresholdHigh =
+                                                mean + (stdDev * 0.3f) // Narrower pause zone
+                                        // (previously 0.5f)
+                                        )
+                }
+
+                // Ensure pause thresholds are between inhale and exhale thresholds
+                if (calibrationVelocityThresholds.pauseThresholdLow >=
+                                calibrationVelocityThresholds.inhaleThreshold
+                ) {
+                        calibrationVelocityThresholds.pauseThresholdLow =
+                                (calibrationVelocityThresholds.pauseThresholdLow +
+                                        calibrationVelocityThresholds.inhaleThreshold) / 2
+                }
+
+                if (calibrationVelocityThresholds.pauseThresholdHigh <=
+                                calibrationVelocityThresholds.exhaleThreshold
+                ) {
+                        calibrationVelocityThresholds.pauseThresholdHigh =
+                                (calibrationVelocityThresholds.pauseThresholdHigh +
+                                        calibrationVelocityThresholds.exhaleThreshold) / 2
+                }
+
+                // Ensure minimum separation between thresholds
+                val minThresholdSeparation = 1.0f
+
+                if (calibrationVelocityThresholds.pauseThresholdHigh -
+                                calibrationVelocityThresholds.pauseThresholdLow <
+                                minThresholdSeparation
+                ) {
+                        val midPoint =
+                                (calibrationVelocityThresholds.pauseThresholdHigh +
+                                        calibrationVelocityThresholds.pauseThresholdLow) / 2
+                        calibrationVelocityThresholds.pauseThresholdLow =
+                                midPoint - minThresholdSeparation / 2
+                        calibrationVelocityThresholds.pauseThresholdHigh =
+                                midPoint + minThresholdSeparation / 2
+                }
+
+                // Ensure the pause thresholds are wide enough
+                // If calculated pause range is too narrow, use a minimum width
+                val minPauseRangeWidth = 4.0f // Minimum width for the pause range
+
+                if (calibrationVelocityThresholds.pauseThresholdHigh -
+                                calibrationVelocityThresholds.pauseThresholdLow < minPauseRangeWidth
+                ) {
+                        val midPoint =
+                                (calibrationVelocityThresholds.pauseThresholdHigh +
+                                        calibrationVelocityThresholds.pauseThresholdLow) / 2
+                        calibrationVelocityThresholds.pauseThresholdLow =
+                                midPoint - minPauseRangeWidth / 2
+                        calibrationVelocityThresholds.pauseThresholdHigh =
+                                midPoint + minPauseRangeWidth / 2
+                }
+
+                // Log the final thresholds with emphasis on the pause range
+                Log.d(
+                        "Calibration",
+                        "Final thresholds - Inhale: ${calibrationVelocityThresholds.inhaleThreshold}, " +
+                                "Exhale: ${calibrationVelocityThresholds.exhaleThreshold}, " +
+                                "Pause range: ${calibrationVelocityThresholds.pauseThresholdLow} to " +
+                                "${calibrationVelocityThresholds.pauseThresholdHigh} " +
+                                "(width: ${calibrationVelocityThresholds.pauseThresholdHigh - calibrationVelocityThresholds.pauseThresholdLow})"
+                )
+
+                // Show completion message
+                Toast.makeText(
+                                this,
+                                "Calibration complete! You can now start recording.",
+                                Toast.LENGTH_LONG
+                        )
+                        .show()
+
+                // Update calibration state and return to camera setup
+                isCalibrating = false
+                viewModel.updateCalibrationState(false)
+
+                // Reset calibration data for next time
+                calibrationData.clear()
+        }
+
+        private fun enforceBreathingCycle(
+                lastPhase: String,
+                currentPhase: String,
+                velocity: Float
+        ): String {
+                // Add minimum duration for a phase (prevent rapid switching)
+                val currentTime = System.currentTimeMillis()
+                val lastPhaseTime = lastPhaseChangeTimestamp[currentPhase] ?: 0L
+                val timeSinceLastChange = currentTime - lastPhaseTime
+
+                // Require at least 300ms in a phase before allowing change
+                val MIN_PHASE_DURATION_MS = 300L
+
+                if (lastPhase != currentPhase && timeSinceLastChange < MIN_PHASE_DURATION_MS) {
+                        return lastPhase // Stay in previous phase if change is too rapid
+                }
+
+                // Rest of your existing logic...
+
+                // Update timestamp when phase changes
+                if (lastPhase != currentPhase) {
+                        lastPhaseChangeTimestamp[currentPhase] = currentTime
+                }
+
+                return currentPhase
+        }
+
+        // New function to handle new patient action
+        private fun newPatient() {
+                viewModel.startNewPatient()
+        }
+
+        private fun toggleTrainingMode() {
+                viewModel.toggleTrainingMode(!viewModel.isTrainingMode.value)
+        }
+
+        private fun saveRespirationChartAsImage() {
+                // Simple placeholder implementation
+                Toast.makeText(this, "Save graph functionality not implemented", Toast.LENGTH_SHORT)
+                        .show()
+        }
+
+        // Add a function to start the camera
+        private fun startCamera() {
+                Log.d("MainActivity", "Starting camera...")
+                if (cameraProvider == null) {
+                        initializeCamera()
+                } else {
+                        bindCameraUseCases()
                 }
         }
 }

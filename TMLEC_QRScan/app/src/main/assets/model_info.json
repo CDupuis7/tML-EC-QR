@@ -1,0 +1,27 @@
+{
+    "input_shape": [
+        1,
+        14
+    ],
+    "feature_names": [
+        "Mean_velocity",
+        "Std_dev_velocity",
+        "Min_velocity",
+        "Max_velocity",
+        "Median_velocity",
+        "Mean_position",
+        "Std_dev_position",
+        "Position_range",
+        "Mean_amplitude",
+        "Max_amplitude",
+        "Direction_changes",
+        "Rate_velocity_change",
+        "Normalized_position",
+        "Std_dev_last_few_velocities"
+    ],
+    "class_names": [
+        "inhaling",
+        "exhaling"
+    ],
+    "date_converted": "2025-03-29 15:06:29"
+}

@@ -20,6 +20,8 @@ core = "1.48.0" # ML Kit Barcode Scanning version
 opencv = "4.8.0"
 firebaseCrashlyticsBuildtools = "3.0.3"
 litert = "1.2.0"
+benchmarkCommon = "1.3.3"
+playServicesDtdi = "16.0.0-beta02"
 #barcodescanner = "4.1.0" # JourneyApps Barcode Scanner version
 
 [libraries]
@@ -70,6 +72,8 @@ retrofit-converter-gson = { group = "com.squareup.retrofit2", name = "converter-
 core = { group = "com.google.ar", name = "core", version.ref = "core" }
 firebase-crashlytics-buildtools = { group = "com.google.firebase", name = "firebase-crashlytics-buildtools", version.ref = "firebaseCrashlyticsBuildtools" }
 litert = { group = "com.google.ai.edge.litert", name = "litert", version.ref = "litert" }
+androidx-benchmark-common = { group = "androidx.benchmark", name = "benchmark-common", version.ref = "benchmarkCommon" }
+play-services-dtdi = { group = "com.google.android.gms", name = "play-services-dtdi", version.ref = "playServicesDtdi" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
