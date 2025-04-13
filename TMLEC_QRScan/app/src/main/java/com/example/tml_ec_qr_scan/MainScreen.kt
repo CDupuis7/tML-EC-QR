@@ -605,147 +605,39 @@ fun RecordingScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Breathing classification result card
-                        if (breathingClassification != "Unknown" &&
-                                        breathingClassification != "Analyzing..."
+                        // Only show breathing phase information during recording, not
+                        // classification
+                        Card(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                colors =
+                                        CardDefaults.cardColors(
+                                                containerColor =
+                                                        Color(0xFFE1F5FE) // Light blue background
+                                        )
                         ) {
-                                Card(
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                        colors =
-                                                CardDefaults.cardColors(
-                                                        containerColor =
-                                                                when (breathingClassification) {
-                                                                        "Normal" ->
-                                                                                Color(
-                                                                                        0xFFE8F5E9
-                                                                                ) // Light green
-                                                                        "Abnormal" ->
-                                                                                Color(
-                                                                                        0xFFFFF3E0
-                                                                                ) // Light orange
-                                                                        else ->
-                                                                                Color(
-                                                                                        0xFFFFEBEE
-                                                                                ) // Light red for
-                                                                // errors
-                                                                }
-                                                )
+                                Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                        Column(
-                                                modifier = Modifier.padding(16.dp),
-                                                horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                                Text(
-                                                        text = "Breathing Assessment",
-                                                        style = MaterialTheme.typography.titleMedium
-                                                )
+                                        Text(
+                                                text = "Real-time Breathing",
+                                                style = MaterialTheme.typography.titleMedium
+                                        )
 
-                                                Spacer(modifier = Modifier.height(8.dp))
+                                        Spacer(modifier = Modifier.height(8.dp))
 
-                                                Text(
-                                                        text = breathingClassification,
-                                                        style =
-                                                                MaterialTheme.typography.titleMedium
-                                                                        .copy(
-                                                                                fontWeight =
-                                                                                        FontWeight
-                                                                                                .Bold
-                                                                        ),
-                                                        color =
-                                                                when (breathingClassification) {
-                                                                        "Normal" ->
-                                                                                Color(
-                                                                                        0xFF4CAF50
-                                                                                ) // Green
-                                                                        "Abnormal" ->
-                                                                                Color(
-                                                                                        0xFFFF9800
-                                                                                ) // Orange
-                                                                        else ->
-                                                                                Color(
-                                                                                        0xFFF44336
-                                                                                ) // Red
-                                                                }
-                                                )
-
-                                                Text(
-                                                        text =
-                                                                "Confidence: ${(classificationConfidence * 100).toInt()}%",
-                                                        style = MaterialTheme.typography.bodyMedium
-                                                )
-
-                                                // Show which model is being used
-                                                Text(
-                                                        text = "Using: ${viewModel.getModelInfo()}",
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        color = Color.Gray
-                                                )
-
-                                                // Show warning if model is missing
-                                                if (viewModel.getModelInfo().contains("MISSING") ||
-                                                                viewModel
-                                                                        .getModelInfo()
-                                                                        .contains("Rule-Based")
-                                                ) {
-                                                        Spacer(modifier = Modifier.height(8.dp))
-                                                        Card(
-                                                                modifier = Modifier.fillMaxWidth(),
-                                                                colors =
-                                                                        CardDefaults.cardColors(
-                                                                                containerColor =
-                                                                                        Color(
-                                                                                                0xFFFFEBEE
-                                                                                        ) // Light
-                                                                                // red
-                                                                                // background
-                                                                                )
-                                                        ) {
-                                                                Column(
-                                                                        modifier =
-                                                                                Modifier.padding(
-                                                                                        8.dp
-                                                                                )
-                                                                ) {
-                                                                        Text(
-                                                                                text =
-                                                                                        "⚠️ MODEL FILES MISSING!",
-                                                                                style =
-                                                                                        MaterialTheme
-                                                                                                .typography
-                                                                                                .bodyMedium
-                                                                                                .copy(
-                                                                                                        fontWeight =
-                                                                                                                FontWeight
-                                                                                                                        .Bold
-                                                                                                ),
-                                                                                color =
-                                                                                        Color(
-                                                                                                0xFFF44336
-                                                                                        ) // Red
-                                                                                // text
-                                                                                )
-
-                                                                        Text(
-                                                                                text =
-                                                                                        "Copy .tflite files to app/src/main/assets/",
-                                                                                style =
-                                                                                        MaterialTheme
-                                                                                                .typography
-                                                                                                .bodySmall,
-                                                                                color =
-                                                                                        Color(
-                                                                                                0xFFF44336
-                                                                                        ) // Red
-                                                                                // text
-                                                                                )
-                                                                }
-                                                        }
-                                                }
-                                        }
+                                        // Show message that classification will be available after
+                                        // recording
+                                        Text(
+                                                text =
+                                                        "Classification will be available after recording stops",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color.Gray
+                                        )
                                 }
-
-                                Spacer(modifier = Modifier.height(8.dp))
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
                                 text = "Breathing Phase: $breathingPhase",
@@ -753,8 +645,7 @@ fun RecordingScreen(
                                 color =
                                         when (breathingPhase.lowercase()) {
                                                 "inhaling" -> Color(0xFF4CAF50)
-                                                "exhaling" -> Color(0xFF2196F3)
-                                                else -> Color(0xFFFFC107)
+                                                else -> Color(0xFF2196F3) // Exhaling
                                         }
                         )
                         Text(
@@ -902,6 +793,16 @@ fun ResultsScreen(
                                                 style = MaterialTheme.typography.bodyMedium
                                         )
 
+                                        // Add breathing rate display
+                                        val breathingRate =
+                                                viewModel.breathingRate.collectAsState().value
+                                        Text(
+                                                text =
+                                                        "Breathing Rate: ${String.format("%.2f", breathingRate)} breaths/min",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold
+                                        )
+
                                         Spacer(modifier = Modifier.height(8.dp))
 
                                         // Add interpretation text
@@ -911,7 +812,7 @@ fun ResultsScreen(
                                                                 "Normal" ->
                                                                         "Regular breathing pattern within normal range (12-20 breaths/minute)"
                                                                 "Abnormal" ->
-                                                                        "Irregular or abnormal breathing pattern detected"
+                                                                        "Breathing rate outside normal range (12-20 breaths/minute)"
                                                                 else ->
                                                                         "Unable to classify breathing pattern"
                                                         },

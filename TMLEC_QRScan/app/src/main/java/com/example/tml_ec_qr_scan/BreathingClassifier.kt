@@ -23,11 +23,7 @@ class BreathingClassifier(private val context: Context) {
 
     // Define multiple potential model filenames to try
     private val abnormalityModelNames =
-            arrayOf(
-                    "breathing_abnormality.tflite",
-                    "respiratory_disease.tflite",
-                    "respiratory_abnormality.tflite"
-            )
+            arrayOf("respiratory_disease.tflite", "respiratory_abnormality.tflite")
 
     // Track which model was successfully loaded
     private var loadedModelName: String
@@ -68,7 +64,7 @@ class BreathingClassifier(private val context: Context) {
     // Companion object for shared values and constants
     companion object {
         // Class labels
-        private val breathingPhaseLabels = arrayOf("Inhaling", "Exhaling", "Pause")
+        private val breathingPhaseLabels = arrayOf("Inhaling", "Exhaling")
         private val abnormalityLabels = arrayOf("Normal", "Abnormal")
 
         // Static references for model information
@@ -418,16 +414,34 @@ class BreathingClassifier(private val context: Context) {
                         }
                     }
 
-                    // Map index to class label
-                    val predictedClass = abnormalityLabels[maxProbIndex]
+                    // Map index to class label - the model's prediction
+                    val modelPredictedClass = abnormalityLabels[maxProbIndex]
 
-                    // If confidence is too extreme (>0.95), reduce it slightly to avoid 100%
-                    // confidence
-                    val adjustedConfidence = if (maxProb > 0.95f) 0.95f else maxProb
+                    // IMPORTANT: Always use breathing rate for final classification
+                    // This matches the Python code logic: rate_status = "NORMAL" if 12 <=
+                    // breathing_rate <= 20 else "ABNORMAL"
+                    val breathingRateBasedClass =
+                            if (breathingRate >= 12f && breathingRate <= 20f) "Normal"
+                            else "Abnormal"
+
+                    // Use breathing rate-based classification, ignore the model's prediction
+                    val predictedClass = breathingRateBasedClass
+
+                    // Log if there's a discrepancy between model and rule-based classification
+                    if (modelPredictedClass != breathingRateBasedClass) {
+                        Log.w(
+                                "BreathingClassifier",
+                                "ML MODEL CLASSIFICATION ($modelPredictedClass) OVERRIDDEN BY RATE-BASED CLASSIFICATION ($breathingRateBasedClass). " +
+                                        "Breathing rate: $breathingRate (normal range: 12-20). Using breathing rate for final decision."
+                        )
+                    }
+
+                    // High confidence for rule-based classification
+                    val adjustedConfidence = 0.95f
 
                     Log.d(
                             "BreathingClassifier",
-                            "ML MODEL RESULT: $predictedClass with confidence $adjustedConfidence"
+                            "FINAL CLASSIFICATION: $predictedClass with confidence $adjustedConfidence (breathing rate: $breathingRate)"
                     )
 
                     // Create and return the detailed classification result
@@ -454,60 +468,17 @@ class BreathingClassifier(private val context: Context) {
             // If we get here, we need to use the rule-based approach
             // (either because model is not available or there was an error)
 
-            // First, normalize our input values for consistent evaluation
-            val normalizedBreathingRate =
-                    when {
-                        breathingRate < 8f -> 0.1f // Very slow breathing
-                        breathingRate < 12f -> 0.3f // Slow breathing
-                        breathingRate < 16f -> 0.5f // Normal lower range
-                        breathingRate < 20f -> 0.7f // Normal upper range
-                        breathingRate < 24f -> 0.8f // Fast breathing
-                        else -> 0.9f // Very fast breathing
-                    }
-            val normalizedIrregularity = irregularityIndex.coerceIn(0f, 0.9f)
-
-            normalizedValues["breathingRate"] = normalizedBreathingRate
-            normalizedValues["irregularity"] = normalizedIrregularity
-            normalizedValues["amplitude"] = (amplitudeVariation / 50f).coerceIn(0.1f, 0.9f)
-            normalizedValues["velocity"] = (avgVelocity / 20f).coerceIn(0.1f, 0.9f)
-
-            // Store detailed metrics
-            details["breathingRateScore"] = if (breathingRate in 12f..20f) 0f else 1f
-            details["irregularityScore"] = irregularityIndex
-            details["amplitudeScore"] = if (amplitudeVariation > 10f) 0f else 1f
-
             // Use rule-based approach
-            Log.d("BreathingClassifier", "Using rule-based classification")
+            Log.d("BreathingClassifier", "Using rule-based classification based on breathing rate")
 
-            // Check for abnormal breathing
-            // Breathing rate: normal is 12-20 breaths/min
-            val abnormalRate = breathingRate < 12 || breathingRate > 20
+            // Check for abnormal breathing - ONLY based on breathing rate (12-20 is normal)
+            val isNormal = breathingRate >= 12f && breathingRate <= 20f
 
-            // Irregularity: normal is < 0.3
-            val highIrregularity = irregularityIndex > 0.3
+            // Classification result based solely on breathing rate
+            val classification = if (isNormal) "Normal" else "Abnormal"
 
-            // Shallow breathing check
-            val shallowBreathing = amplitudeVariation < 10 && avgVelocity < 5
-
-            // Count abnormal factors
-            var abnormalFactors = 0
-            if (abnormalRate) abnormalFactors++
-            if (highIrregularity) abnormalFactors++
-            if (shallowBreathing) abnormalFactors++
-
-            details["abnormalFactors"] = abnormalFactors.toFloat()
-
-            // Classification result
-            val classification = if (abnormalFactors >= 2) "Abnormal" else "Normal"
-
-            // Calculate confidence - more abnormal factors = higher confidence
-            val confidence =
-                    when (abnormalFactors) {
-                        0 -> 0.85f // Normal with high confidence
-                        1 -> 0.7f // Normal with moderate confidence
-                        2 -> 0.8f // Abnormal with moderate confidence
-                        else -> 0.9f // Abnormal with high confidence
-                    }
+            // High confidence for simple rule-based classification
+            val confidence = 0.95f
 
             Log.d(
                     "BreathingClassifier",
@@ -515,7 +486,7 @@ class BreathingClassifier(private val context: Context) {
             )
             Log.d(
                     "BreathingClassifier",
-                    "Abnormal factors: Rate=$abnormalRate, Irregularity=$highIrregularity, Shallow=$shallowBreathing"
+                    "Classification based solely on breathing rate: $breathingRate (normal range: 12-20)"
             )
 
             // Return the rule-based result with detailed metrics
@@ -728,30 +699,20 @@ class BreathingClassifier(private val context: Context) {
                     dataPoint.velocity
                 }
 
-        // Determine breathing phase using velocity thresholds
-        // NARROWER pause range for more natural breathing cycles
+        // Determine breathing phase using velocity direction only
         val (phase, confidence) =
                 when {
-                    smoothedVelocity < -1.5f -> { // More sensitive threshold for inhaling (was -3f)
-                        val conf = ((abs(smoothedVelocity) - 1.5f) / 10f).coerceIn(0.5f, 1.0f)
+                    smoothedVelocity <= 0f -> { // Using 0 as the threshold for inhaling
+                        val conf = ((abs(smoothedVelocity) + 1.5f) / 10f).coerceIn(0.5f, 1.0f)
                         Pair("inhaling", conf)
                     }
-                    smoothedVelocity > 1.5f -> { // More sensitive threshold for exhaling (was 3f)
-                        val conf = ((abs(smoothedVelocity) - 1.5f) / 10f).coerceIn(0.5f, 1.0f)
+                    else -> { // smoothedVelocity > 0f for exhaling
+                        val conf = ((abs(smoothedVelocity) + 1.5f) / 10f).coerceIn(0.5f, 1.0f)
                         Pair("exhaling", conf)
-                    }
-                    else -> {
-                        // Narrower pause range
-                        val conf =
-                                (1f - abs(smoothedVelocity) / 1.5f).coerceIn(
-                                        0.3f,
-                                        0.7f
-                                ) // Updated from 3f
-                        Pair("pause", conf)
                     }
                 }
 
-        // Add hysteresis to prevent rapid switching - enforce natural breathing cycles
+        // Add hysteresis to prevent rapid switching
         val lastPhase =
                 if (recentMovements.size > 1)
                         recentMovements[recentMovements.size - 2].breathingPhase.lowercase()
@@ -776,7 +737,7 @@ class BreathingClassifier(private val context: Context) {
             currentPhase: String,
             velocity: Float
     ): String {
-        // If velocity is very clearly in one direction, always respect that - lowered from 8f
+        // If velocity is very clearly in one direction, always respect that
         if (abs(velocity) > 5f) {
             return currentPhase
         }
@@ -802,25 +763,7 @@ class BreathingClassifier(private val context: Context) {
             lastPhaseChangeTime[currentPhase] = currentTime
         }
 
-        // Natural breathing cycle: inhale -> (pause) -> exhale -> (pause) -> inhale
-        // Prevent unnatural transitions like inhale -> exhale without pause
-        // or exhale -> inhale without pause
-        return when {
-            // Prevent direct inhale -> exhale transitions
-            lastPhase == "inhaling" && currentPhase == "exhaling" -> "pause"
-
-            // Prevent direct exhale -> inhale transitions
-            lastPhase == "exhaling" && currentPhase == "inhaling" -> "pause"
-
-            // For pause -> X transitions, use velocity direction to guide the decision
-            lastPhase == "pause" && currentPhase == "pause" -> {
-                // Don't stay in pause too long - prefer to move to inhale/exhale
-                if (velocity < -1f) "inhaling" else if (velocity > 1f) "exhaling" else "pause"
-            }
-
-            // Otherwise, respect the current phase
-            else -> currentPhase
-        }
+        return currentPhase
     }
 
     /** Release resources when no longer needed */
@@ -883,31 +826,26 @@ class BreathingClassifier(private val context: Context) {
                 "Creating feature vector for model input - mapping 4 metrics to 35 features"
         )
         Log.d("BreathingClassifier", "INPUT VALUES:")
-        Log.d("BreathingClassifier", "  - Breathing Rate: $breathingRate (normal range: 8-24)")
+        Log.d("BreathingClassifier", "  - Breathing Rate: $breathingRate (normal range: 12-20)")
         Log.d("BreathingClassifier", "  - Irregularity: $irregularityIndex (normal range: 0-0.5)")
         Log.d("BreathingClassifier", "  - Amplitude Variation: $amplitudeVariation")
         Log.d("BreathingClassifier", "  - Average Velocity: $avgVelocity")
 
         // NORMALIZE our inputs to typical ranges expected by the model
 
-        // Breathing rate: normalize to [0-1] range where 0.5 is perfectly normal (16 breaths/min)
+        // Breathing rate: normalize to [0-1] range where normal values (12-20) map to 0.4-0.6
         val normalizedBreathingRate =
                 when {
                     breathingRate < 8f -> 0.1f // Very slow breathing
                     breathingRate < 12f -> 0.3f // Slow breathing
-                    breathingRate < 16f -> 0.5f // Normal lower range
-                    breathingRate < 20f -> 0.7f // Normal upper range
-                    breathingRate < 24f -> 0.8f // Fast breathing
+                    breathingRate <= 20f -> 0.5f // Normal range - all values map to 0.5
+                    breathingRate < 24f -> 0.7f // Fast breathing
                     else -> 0.9f // Very fast breathing
                 }
 
-        // Irregularity: already in [0-1] range but may need adjustment
+        // Other normalizations remain the same
         val normalizedIrregularity = irregularityIndex.coerceIn(0f, 0.9f)
-
-        // Amplitude: normalize to [0-1] range based on expected values
         val normalizedAmplitude = (amplitudeVariation / 50f).coerceIn(0.1f, 0.9f)
-
-        // Velocity: normalize to [0-1] range
         val normalizedVelocity = (avgVelocity / 20f).coerceIn(0.1f, 0.9f)
 
         Log.d("BreathingClassifier", "NORMALIZED VALUES:")
@@ -916,37 +854,18 @@ class BreathingClassifier(private val context: Context) {
         Log.d("BreathingClassifier", "  - Normalized Amplitude: $normalizedAmplitude")
         Log.d("BreathingClassifier", "  - Normalized Velocity: $normalizedVelocity")
 
-        // 0: rms_energy_mean - map to normalized amplitude
+        // Feature mapping remains the same
         features[0] = normalizedAmplitude
-
-        // 1: rms_energy_std - slightly lower than mean
         features[1] = normalizedAmplitude * 0.5f
-
-        // 2: zero_crossing_rate_mean - relate to irregularity
         features[2] = normalizedIrregularity * 0.5f
-
-        // 3: zero_crossing_rate_std
         features[3] = normalizedIrregularity * 0.3f
-
-        // 4: spectral_centroid_mean - derived from amplitude and irregularity
         features[4] = (normalizedAmplitude + normalizedIrregularity) * 0.4f
-
-        // 5: spectral_centroid_std
         features[5] = (normalizedAmplitude + normalizedIrregularity) * 0.2f
-
-        // 6: spectral_bandwidth_mean - relate to velocity
         features[6] = normalizedVelocity * 0.6f
-
-        // 7: spectral_bandwidth_std
         features[7] = normalizedVelocity * 0.3f
-
-        // 8: breathing_rate - direct normalized value
         features[8] = normalizedBreathingRate
 
-        // MFCC features - these are harder to synthesize, but create reasonable values
-        // We'll use combinations of our 4 normalized metrics with different weights
-
-        // MFCCs typical range: -10 to +10, but we'll use 0-1 for simplicity
+        // Rest of the feature vector creation remains the same
         val mfccBaseValues =
                 listOf(
                         normalizedBreathingRate,
@@ -974,13 +893,6 @@ class BreathingClassifier(private val context: Context) {
                             (0.9f - (i * 0.05f)).coerceAtLeast(0.2f)
             features[stdPos] = features[meanPos] * 0.3f // std is typically smaller than mean
         }
-
-        // Log some of the feature values
-        Log.d("BreathingClassifier", "FEATURE VECTOR SAMPLES:")
-        Log.d("BreathingClassifier", "  - features[0] (rms_energy_mean): ${features[0]}")
-        Log.d("BreathingClassifier", "  - features[8] (breathing_rate): ${features[8]}")
-        Log.d("BreathingClassifier", "  - features[9] (mfcc_0_mean): ${features[9]}")
-        Log.d("BreathingClassifier", "  - features[34] (mfcc_12_std): ${features[34]}")
 
         return features
     }
