@@ -32,6 +32,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,7 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import boofcv.android.ConvertBitmap
@@ -526,6 +529,96 @@ class MainActivity : ComponentActivity() {
                                                                                                                         .bodySmall
                                                                                                 )
                                                                                         }
+                                                                                }
+                                                                        }
+                                                                }
+
+                                                                // Display recording timer when
+                                                                // active
+                                                                if (viewModel.isRecording.value) {
+                                                                        val remainingTime by
+                                                                                viewModel
+                                                                                        .recordingTimeRemaining
+                                                                                        .collectAsState()
+                                                                        val isTimerActive by
+                                                                                viewModel
+                                                                                        .isTimerActive
+                                                                                        .collectAsState()
+
+                                                                        // Large timer display at
+                                                                        // the top center
+                                                                        Box(
+                                                                                modifier =
+                                                                                        Modifier.align(
+                                                                                                        Alignment
+                                                                                                                .TopCenter
+                                                                                                )
+                                                                                                .padding(
+                                                                                                        top =
+                                                                                                                32.dp
+                                                                                                )
+                                                                                                .background(
+                                                                                                        color =
+                                                                                                                Color.Black
+                                                                                                                        .copy(
+                                                                                                                                alpha =
+                                                                                                                                        0.7f
+                                                                                                                        ),
+                                                                                                        shape =
+                                                                                                                RoundedCornerShape(
+                                                                                                                        12.dp
+                                                                                                                )
+                                                                                                )
+                                                                                                .padding(
+                                                                                                        horizontal =
+                                                                                                                20.dp,
+                                                                                                        vertical =
+                                                                                                                10.dp
+                                                                                                )
+                                                                        ) {
+                                                                                Column(
+                                                                                        horizontalAlignment =
+                                                                                                Alignment
+                                                                                                        .CenterHorizontally
+                                                                                ) {
+                                                                                        // Timer
+                                                                                        // label
+                                                                                        Text(
+                                                                                                text =
+                                                                                                        "RECORDING TIME",
+                                                                                                color =
+                                                                                                        Color.White,
+                                                                                                fontSize =
+                                                                                                        14.sp,
+                                                                                                fontWeight =
+                                                                                                        FontWeight
+                                                                                                                .Bold
+                                                                                        )
+
+                                                                                        // Timer
+                                                                                        // countdown
+                                                                                        Text(
+                                                                                                text =
+                                                                                                        formatTime(
+                                                                                                                remainingTime
+                                                                                                        ),
+                                                                                                color =
+                                                                                                        if (remainingTime <
+                                                                                                                        10
+                                                                                                        )
+                                                                                                                Color(
+                                                                                                                        0xFFFF5252
+                                                                                                                )
+                                                                                                        else
+                                                                                                                Color(
+                                                                                                                        0xFF4CAF50
+                                                                                                                ),
+                                                                                                fontSize =
+                                                                                                        28.sp,
+                                                                                                fontWeight =
+                                                                                                        FontWeight
+                                                                                                                .Bold
+                                                                                        )
                                                                                 }
                                                                         }
                                                                 }
@@ -1257,74 +1350,12 @@ class MainActivity : ComponentActivity() {
                 // Extract amplitudes for analysis
                 val amplitudes = data.map { it.amplitude }
                 val timestamps = data.map { it.timestamp }
+                val phases = data.map { it.breathingPhase.lowercase() }
 
                 // Calculate basic statistics
                 val averageAmplitude = amplitudes.average().toFloat()
                 val maxAmplitude = amplitudes.maxOrNull() ?: 0f
                 val minAmplitude = amplitudes.minOrNull() ?: 0f
-
-                // Determine amplitude threshold for counting breaths
-                // A breath must have amplitude variation greater than 15% of the average amplitude
-                val amplitudeThreshold = averageAmplitude * 0.15f
-
-                // List to store breath timestamps for analysis
-                val breathTimestamps = mutableListOf<Long>()
-
-                // Track peaks and troughs to detect breath cycles
-                var isPreviousPeak = false
-                var previousPeakAmplitude = Float.MIN_VALUE
-                var previousTroughAmplitude = Float.MAX_VALUE
-                var previousPeakIndex = -1
-                var previousTroughIndex = -1
-
-                // Minimum time between breaths (300ms)
-                val minBreathInterval = 300
-
-                // Scan for peaks and troughs to identify breath cycles
-                for (i in 1 until amplitudes.size - 1) {
-                        val prev = amplitudes[i - 1]
-                        val current = amplitudes[i]
-                        val next = amplitudes[i + 1]
-
-                        // Detect peaks
-                        if (current > prev && current >= next) {
-                                // It's a peak
-                                if (!isPreviousPeak && previousTroughIndex != -1) {
-                                        // We found a peak after a trough
-                                        val peakTroughDiff = current - previousTroughAmplitude
-
-                                        // Only count it if the amplitude difference exceeds the
-                                        // threshold
-                                        // and enough time has passed since the last breath
-                                        if (peakTroughDiff > amplitudeThreshold &&
-                                                        (breathTimestamps.isEmpty() ||
-                                                                timestamps[i] -
-                                                                        breathTimestamps.last() >
-                                                                        minBreathInterval)
-                                        ) {
-
-                                                // Record the timestamp of this breath
-                                                breathTimestamps.add(timestamps[i])
-
-                                                Log.d(
-                                                        "RespiratoryTracking",
-                                                        "Breath detected at index $i, " +
-                                                                "amplitude diff: $peakTroughDiff, timestamp: ${timestamps[i]}"
-                                                )
-                                        }
-                                }
-                                isPreviousPeak = true
-                                previousPeakAmplitude = current
-                                previousPeakIndex = i
-                        }
-                        // Detect troughs
-                        else if (current < prev && current <= next) {
-                                // It's a trough
-                                isPreviousPeak = false
-                                previousTroughAmplitude = current
-                                previousTroughIndex = i
-                        }
-                }
 
                 // Calculate duration in minutes for breathing rate
                 val durationInMinutes =
@@ -1334,22 +1365,36 @@ class MainActivity : ComponentActivity() {
                                 0.01f // Prevent division by zero
                         }
 
-                // Calculate breathing rate from detected breaths
-                val breathCount = breathTimestamps.size
+                // Count complete breathing cycles (inhale + exhale = 1 breath)
+                var breathCount = 0
+                var prevPhase = ""
+
+                // Count transitions from exhaling to inhaling as full cycles
+                for (phase in phases) {
+                        if (prevPhase == "exhaling" && phase == "inhaling") {
+                                breathCount++
+                        }
+                        prevPhase = phase
+                }
+
+                // Log for debugging
+                Log.d("RespiratoryTracking", "Total breathing cycles counted: $breathCount")
+                Log.d(
+                        "RespiratoryTracking",
+                        "Recording duration: ${durationInMinutes * 60} seconds (${durationInMinutes} minutes)"
+                )
+
+                // Calculate breathing rate from detected breaths (no upper limit)
                 val breathingRate =
                         if (durationInMinutes > 0 && breathCount > 0) {
-                                (breathCount / durationInMinutes).coerceIn(
-                                        6f,
-                                        80f
-                                ) // Reasonable human limits
+                                breathCount / durationInMinutes // No coerceIn to allow full range
                         } else {
                                 0f
                         }
 
                 Log.d(
                         "RespiratoryTracking",
-                        "Breathing Analysis: " +
-                                "Count=$breathCount, Rate=$breathingRate, Duration=${durationInMinutes * 60} seconds"
+                        "Final calculated breathing rate: $breathingRate breaths/minute"
                 )
 
                 return BreathingMetrics(
@@ -1411,22 +1456,15 @@ class MainActivity : ComponentActivity() {
                 // In training data mode, use a simpler and more consistent mapping
                 if (isTrainingDataMode) {
                         return when {
-                                velocity < 0 -> "inhaling" // Any upward movement is inhaling
-                                velocity > 0 -> "exhaling" // Any downward movement is exhaling
-                                else -> "pause" // Zero velocity is pause
+                                velocity <= 0 -> "inhaling" // Any upward movement is inhaling
+                                else -> "exhaling" // Any downward movement is exhaling
                         }
                 }
 
-                // Normal mode with calibrated thresholds
+                // Normal mode with calibrated thresholds - no pause, only inhaling and exhaling
                 return when {
-                        velocity < calibrationVelocityThresholds.inhaleThreshold ->
-                                "inhaling" // Upward movement (negative velocity)
-                        velocity > calibrationVelocityThresholds.exhaleThreshold ->
-                                "exhaling" // Downward movement (positive velocity)
-                        velocity > calibrationVelocityThresholds.pauseThresholdLow &&
-                                velocity < calibrationVelocityThresholds.pauseThresholdHigh ->
-                                "pause" // Use calibrated pause range
-                        else -> "pause" // Default to pause for ambiguous values
+                        velocity < 0 -> "inhaling" // Upward movement (negative velocity)
+                        else -> "exhaling" // Downward movement (positive velocity)
                 }
         }
 
@@ -1621,7 +1659,7 @@ class MainActivity : ComponentActivity() {
                                 }
                         confidence = 0.95f // High confidence in training mode
                 } else {
-                        // Normal mode - use ML classifier
+                        // Normal mode - use ML classifier only for breathing phase detection
                         val classificationResult =
                                 breathingClassifier.processNewDataPoint(currentDataPoint)
                         breathingPhase = classificationResult.phase
@@ -1658,18 +1696,6 @@ class MainActivity : ComponentActivity() {
 
                 // Add data point if recording
                 if (isRecording) {
-                        // Add debug logging to see frequency of each phase
-                        if (currentTime % 5000 < 50) { // Log every ~5 seconds
-                                // Count phases in recent data (last 20 points)
-                                val recentPoints = viewModel.respiratoryData.value.takeLast(20)
-                                val phaseCount =
-                                        recentPoints
-                                                .groupBy { it.breathingPhase.lowercase() }
-                                                .mapValues { it.value.size }
-
-                                Log.d("BreathingPhaseStats", "Recent phases: $phaseCount")
-                        }
-
                         // Create a data point with ML-determined phase
                         val dataPoint =
                                 RespiratoryDataPoint(
@@ -1913,8 +1939,6 @@ class MainActivity : ComponentActivity() {
                         return lastPhase // Stay in previous phase if change is too rapid
                 }
 
-                // Rest of your existing logic...
-
                 // Update timestamp when phase changes
                 if (lastPhase != currentPhase) {
                         lastPhaseChangeTimestamp[currentPhase] = currentTime
@@ -1946,5 +1970,12 @@ class MainActivity : ComponentActivity() {
                 } else {
                         bindCameraUseCases()
                 }
+        }
+
+        // Format seconds into minute:second display (e.g., "1:45")
+        private fun formatTime(seconds: Int): String {
+                val minutes = seconds / 60
+                val remainingSeconds = seconds % 60
+                return "%d:%02d".format(minutes, remainingSeconds)
         }
 }

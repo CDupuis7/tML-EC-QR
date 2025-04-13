@@ -104,6 +104,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _classificationConfidence = MutableStateFlow<Float>(0.0f)
     val classificationConfidence: StateFlow<Float> = _classificationConfidence.asStateFlow()
 
+    // Breathing rate
+    private val _breathingRate = MutableStateFlow<Float>(0.0f)
+    val breathingRate: StateFlow<Float> = _breathingRate.asStateFlow()
+
+    // Recording timer
+    private val _recordingTimeRemaining = MutableStateFlow<Int>(30)
+    val recordingTimeRemaining: StateFlow<Int> = _recordingTimeRemaining.asStateFlow()
+
+    // Is timer active
+    private val _isTimerActive = MutableStateFlow<Boolean>(false)
+    val isTimerActive: StateFlow<Boolean> = _isTimerActive.asStateFlow()
+
+    // Timer job
+    private var timerJob: Job? = null
+
+    // Recording duration in seconds
+    private val _recordingDuration = MutableStateFlow<Int>(30)
+    val recordingDuration: StateFlow<Int> = _recordingDuration.asStateFlow()
+
     // Breathing classifier for real-time analysis
     private var breathingClassifier: BreathingClassifier? = null
 
@@ -158,30 +177,87 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Start recording of respiratory data */
     fun startRecording() {
         viewModelScope.launch {
+            // Cancel any existing timer
+            timerJob?.cancel()
+
+            // Reset recording start time
+            recordingStartTime = System.currentTimeMillis()
+
+            // Initialize recording state
             _isRecording.value = true
             _readyToRecord.value = true
-            _breathingClassification.value = "Analyzing..."
-            _classificationConfidence.value = 0.0f
-            Log.d("MainViewModel", "Starting actual recording")
 
-            // Reset timing variables for analysis
-            recordingStartTime = System.currentTimeMillis()
+            // Reset classification values
+            _breathingClassification.value = "Waiting for recording to complete..."
+            _classificationConfidence.value = 0.0f
+
+            // Reset analysis tracking
             lastAnalysisTime = 0L
             analysisStarted = false
 
-            // Clear existing data only if we're starting from scratch
-            if (_respiratoryData.value.isEmpty()) {
-                _respiratoryData.value = emptyList()
-                breathingDataBuffer.clear()
-            }
+            // Clear existing data for a fresh start
+            _respiratoryData.value = emptyList()
+            breathingDataBuffer.clear()
+
+            // Start the countdown timer with the custom duration
+            val duration = _recordingDuration.value
+            _recordingTimeRemaining.value = duration
+            _isTimerActive.value = true
+
+            Log.d("MainViewModel", "Starting recording with timer: $duration seconds")
+
+            // Launch the timer job
+            timerJob =
+                    viewModelScope.launch {
+                        while (_recordingTimeRemaining.value > 0 && _isRecording.value) {
+                            delay(1000) // Wait one second
+                            _recordingTimeRemaining.value -= 1
+
+                            // Log every 5 seconds
+                            if (_recordingTimeRemaining.value % 5 == 0 ||
+                                            _recordingTimeRemaining.value <= 3
+                            ) {
+                                Log.d(
+                                        "MainViewModel",
+                                        "Recording time remaining: ${_recordingTimeRemaining.value} seconds, " +
+                                                "Data points so far: ${breathingDataBuffer.size}"
+                                )
+                            }
+
+                            // Once timer reaches zero, stop recording automatically
+                            if (_recordingTimeRemaining.value <= 0) {
+                                Log.d(
+                                        "MainViewModel",
+                                        "Recording timer completed, stopping recording"
+                                )
+                                stopRecording()
+                                break
+                            }
+                        }
+                    }
         }
     }
 
     /** Stop recording and show results */
     fun stopRecording() {
         viewModelScope.launch {
+            // Cancel the timer job
+            timerJob?.cancel()
+            timerJob = null
+
+            // Reset timer state
+            _isTimerActive.value = false
+
+            // Stop recording
             _isRecording.value = false
             _readyToRecord.value = false
+
+            // Analyze breathing pattern after stopping recording
+            if (breathingDataBuffer.isNotEmpty()) {
+                Log.d("MainViewModel", "Recording stopped, analyzing breathing pattern...")
+                analyzeBreathingPattern()
+            }
+
             _uiState.value = UiState.Results
         }
     }
@@ -252,60 +328,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     breathingDataBuffer.removeAt(0)
                 }
 
-                // Check if we should analyze the breathing pattern
-                val currentTime = System.currentTimeMillis()
-
                 // Log data collection progress
                 if (breathingDataBuffer.size % 10 == 0) { // Log every 10 data points
                     Log.d("MainViewModel", "Collected ${breathingDataBuffer.size} data points")
                     Log.d(
                             "MainViewModel",
-                            "Time since recording started: ${currentTime - recordingStartTime}ms"
+                            "Time since recording started: ${System.currentTimeMillis() - recordingStartTime}ms"
                     )
-                    Log.d("MainViewModel", "Analysis will start after: ${initialAnalysisDelay}ms")
                 }
 
-                // Only start analyzing if:
-                // 1. We're actively recording
-                // 2. We have enough data points
-                // 3. We've waited the initial delay for first analysis OR we've already started
-                // analyzing
-                // 4. Enough time has passed since last analysis
-                if (_isRecording.value &&
-                                breathingDataBuffer.size >= minDataPointsForAnalysis &&
-                                ((currentTime - lastAnalysisTime > analysisInterval &&
-                                        analysisStarted) ||
-                                        (!analysisStarted &&
-                                                currentTime - recordingStartTime >
-                                                        initialAnalysisDelay))
-                ) {
-
-                    if (!analysisStarted) {
-                        Log.d(
-                                "MainViewModel",
-                                "----------------------------------------------------"
-                        )
-                        Log.d("MainViewModel", "STARTING BREATHING ANALYSIS AFTER INITIAL DELAY")
-                        Log.d("MainViewModel", "Data points collected: ${breathingDataBuffer.size}")
-                        Log.d(
-                                "MainViewModel",
-                                "Time elapsed: ${currentTime - recordingStartTime}ms"
-                        )
-                        Log.d(
-                                "MainViewModel",
-                                "----------------------------------------------------"
-                        )
-                        analysisStarted = true
-                    } else {
-                        Log.d(
-                                "MainViewModel",
-                                "Running periodic analysis - ${breathingDataBuffer.size} data points"
-                        )
-                    }
-
-                    analyzeBreathingPattern()
-                    lastAnalysisTime = currentTime
-                }
+                // No breathing pattern analysis during recording - will be done when recording
+                // stops
             }
         }
     }
@@ -397,6 +430,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val irregularityIndex = calculateIrregularityIndex()
                 val amplitudeVariation = calculateAmplitudeVariation()
                 val avgVelocity = calculateAverageVelocity()
+
+                // Store breathing rate for display
+                _breathingRate.value = breathingRate
 
                 // Log the features for debugging
                 Log.d("MainViewModel", "----------------------------------------------------")
@@ -789,7 +825,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (breathTimes.size < 3) {
             Log.d("IrregularityIndex", "Not enough phase changes to calculate irregularity")
-            return 0f
+            return 0.3f // Return a default moderate value
         }
 
         // Remove outliers (values more than 3 standard deviations from mean)
