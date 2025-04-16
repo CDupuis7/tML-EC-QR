@@ -2,8 +2,7 @@ package com.example.tml_ec_qr_scan
 
 import android.content.Context
 import android.util.Log
-import kotlin.random.Random
-
+import kotlin.math.pow
 
 class DiseaseClassifier(private val context: Context) {
         private var loaded = false
@@ -15,94 +14,130 @@ class DiseaseClassifier(private val context: Context) {
         }
 
         /**
-         * Classifies respiratory sounds based on extracted features
-         * @param audioFeatures Features extracted from respiratory audio
-         * @param breathingRate Calculated breathing rate from QR tracking
+         * Classifies respiratory data to detect patterns
+         * @param respiratoryData List of respiratory data points collected
+         * @param breathingMetrics Calculated breathing metrics
+         * @param patientMetadata Patient information
          * @return DiagnosisResult containing classification and recommendations
          */
-        fun classify(audioFeatures: Map<String, Float>, breathingRate: Float): DiagnosisResult {
+        fun classify(
+                respiratoryData: List<RespiratoryDataPoint>,
+                breathingMetrics: BreathingMetrics,
+                patientMetadata: PatientMetadata
+        ): DiagnosisResult {
                 // If we haven't loaded our model yet, return an error
                 if (!loaded) {
                         return DiagnosisResult(
                                 classification = "Error",
                                 confidence = 0f,
-                                breathingRate = breathingRate,
+                                breathingRate = breathingMetrics.breathingRate,
                                 irregularityIndex = 0f,
-                                recommendations = listOf("Model not loaded. Please try again.")
+                                recommendations = listOf("Model not loaded. Please try again."),
+                                detectedConditions = emptyList(),
+                                amplitudeVariability = 0f,
+                                durationVariability = 0f
                         )
                 }
 
                 try {
-                        // In a real implementation, we would use TensorFlow Lite to run inference
-                        // For now, use a rule-based approach based on the extracted features
-
-                        // Get key features
-                        val hasWheezes = audioFeatures["has_wheezes"] ?: 0f
-                        val hasCrackles = audioFeatures["has_crackles"] ?: 0f
-                        val zeroCrossingRate = audioFeatures["zero_crossing_rate"] ?: 0f
-                        val rmsEnergy = audioFeatures["rms_energy"] ?: 0f
-                        val variability = audioFeatures["variability"] ?: 0f
+                        // Extract required features from respiratory data
+                        val amplitudeVariability = calculateAmplitudeVariability(respiratoryData)
+                        val durationVariability = calculateDurationVariability(respiratoryData)
 
                         // Calculate irregularity index (0-100)
                         // Higher values indicate more irregular breathing
                         val irregularityIndex =
                                 calculateIrregularityIndex(
-                                        hasWheezes > 0,
-                                        hasCrackles > 0,
-                                        zeroCrossingRate,
-                                        rmsEnergy,
-                                        variability,
-                                        breathingRate
+                                        false, // hasWheezes
+                                        false, // hasCrackles
+                                        0f, // zeroCrossingRate
+                                        0f, // rmsEnergy
+                                        amplitudeVariability,
+                                        breathingMetrics.breathingRate
                                 )
 
-                        // Determine classification based on detected sounds
+                        // Use the BreathingConditionDetector to determine classification
+                        // using the same logic as the Python script
                         val classification =
-                                when {
-                                        hasWheezes > 0 && hasCrackles > 0 -> "Both"
-                                        hasWheezes > 0 -> "Wheezes"
-                                        hasCrackles > 0 -> "Crackles"
-                                        else -> "Normal"
-                                }
+                                BreathingConditionDetector.classifyBreathingPattern(
+                                        breathingMetrics.breathingRate
+                                )
 
                         // Calculate confidence (would normally come from the model)
-                        // For demo purposes, generate a confidence between 70-95%
-                        val randomConfidence = 0.7f + (Random.nextFloat() * 0.25f)
-                        val confidence =
-                                when (classification) {
-                                        "Normal" -> if (irregularityIndex < 20) 0.9f else 0.7f
-                                        else -> randomConfidence
-                                }
+                        val confidence = if (classification == "Normal") 0.9f else 0.8f
 
-                        // Generate appropriate recommendations
-                        val recommendations =
-                                generateRecommendations(
-                                        classification,
-                                        irregularityIndex,
-                                        breathingRate
+                        // Use the BreathingConditionDetector to detect specific conditions
+                        // like bradypnea and tachypnea - exactly like the Python script
+                        val detectedConditions =
+                                BreathingConditionDetector.detectBreathingConditions(
+                                        breathingMetrics.breathingRate,
+                                        irregularityIndex / 100f, // Convert to 0-1 scale
+                                        amplitudeVariability,
+                                        durationVariability
                                 )
 
-                        return DiagnosisResult(
-                                classification = classification,
-                                confidence = confidence,
-                                breathingRate = breathingRate,
-                                irregularityIndex = irregularityIndex,
-                                recommendations = recommendations
+                        // IMPORTANT DEBUG LOGS - DO NOT REMOVE
+                        Log.i(TAG, "***** DISEASE DETECTION RESULTS *****")
+                        Log.i(TAG, "Breathing Rate: ${breathingMetrics.breathingRate} breaths/min")
+                        Log.i(TAG, "Classification: $classification")
+                        Log.i(TAG, "Detected Conditions: $detectedConditions")
+                        Log.i(TAG, "Irregularity Index: $irregularityIndex")
+                        Log.i(TAG, "Amplitude Variability: $amplitudeVariability")
+                        Log.i(TAG, "Duration Variability: $durationVariability")
+                        Log.i(TAG, "*************************************")
+
+                        // Generate recommendations based on detected conditions
+                        val recommendations =
+                                BreathingConditionDetector.generateRecommendations(
+                                        classification,
+                                        breathingMetrics.breathingRate,
+                                        detectedConditions
+                                )
+
+                        // Print recommendations for debugging
+                        Log.i(TAG, "Recommendations: $recommendations")
+
+                        Log.d(
+                                TAG,
+                                "Classification: $classification, Conditions: $detectedConditions"
                         )
+
+                        // EXPLICITLY SET DETECTED CONDITIONS
+                        val diagnosisResult =
+                                DiagnosisResult(
+                                        classification = classification,
+                                        confidence = confidence,
+                                        breathingRate = breathingMetrics.breathingRate,
+                                        irregularityIndex = irregularityIndex,
+                                        recommendations = recommendations,
+                                        detectedConditions = detectedConditions,
+                                        amplitudeVariability = amplitudeVariability,
+                                        durationVariability = durationVariability
+                                )
+
+                        // Verify diagnosis result
+                        Log.i(
+                                TAG,
+                                "FINAL DIAGNOSIS: ${diagnosisResult.classification}, CONDITIONS: ${diagnosisResult.detectedConditions}"
+                        )
+
+                        return diagnosisResult
                 } catch (e: Exception) {
                         Log.e(TAG, "Error during classification: ${e.message}")
                         return DiagnosisResult(
                                 classification = "Error",
                                 confidence = 0f,
-                                breathingRate = breathingRate,
+                                breathingRate = breathingMetrics.breathingRate,
                                 irregularityIndex = 0f,
-                                recommendations = listOf("Error during analysis: ${e.message}")
+                                recommendations = listOf("Error during analysis: ${e.message}"),
+                                detectedConditions = emptyList(),
+                                amplitudeVariability = 0f,
+                                durationVariability = 0f
                         )
                 }
         }
 
-        /**
-         * Calculates an irregularity index from 0-100 based on audio features and breathing rate
-         */
+        /** Calculates an irregularity index from 0-100 based on available features */
         private fun calculateIrregularityIndex(
                 hasWheezes: Boolean,
                 hasCrackles: Boolean,
@@ -219,6 +254,125 @@ class DiseaseClassifier(private val context: Context) {
                 return recommendations
         }
 
+        // Calculate amplitude variability from respiratory data
+        private fun calculateAmplitudeVariability(data: List<RespiratoryDataPoint>): Float {
+                if (data.isEmpty()) return 0f
+
+                val amplitudes = data.map { it.amplitude }
+                val min = amplitudes.minOrNull() ?: 0f
+                val max = amplitudes.maxOrNull() ?: 0f
+                val mean = amplitudes.average().toFloat()
+
+                // Return a normalized variability measure
+                return if (mean > 0) {
+                        (max - min) / mean
+                } else {
+                        0f
+                }
+        }
+
+        // Calculate duration variability from respiratory data
+        private fun calculateDurationVariability(data: List<RespiratoryDataPoint>): Float {
+                if (data.size < 10) return 0f
+
+                // Find phase transitions
+                val phases = data.map { it.breathingPhase.lowercase() }
+                val transitions = mutableListOf<Long>()
+
+                for (i in 1 until data.size) {
+                        if (phases[i] != phases[i - 1]) {
+                                transitions.add(data[i].timestamp)
+                        }
+                }
+
+                // Calculate intervals between transitions
+                if (transitions.size < 3) return 0f
+
+                val intervals = mutableListOf<Long>()
+                for (i in 1 until transitions.size) {
+                        intervals.add(transitions[i] - transitions[i - 1])
+                }
+
+                // Calculate coefficient of variation (standard deviation / mean)
+                val mean = intervals.average()
+                val sumSquaredDiff = intervals.sumOf { (it - mean).pow(2) }
+                val stdDev = kotlin.math.sqrt(sumSquaredDiff / intervals.size)
+
+                return (stdDev / mean).toFloat()
+        }
+
+        // Helper function to generate detailed recommendations based on detected conditions
+        private fun generateDetailedRecommendations(
+                classification: String,
+                breathingRate: Float,
+                irregularityIndex: Float,
+                detectedConditions: List<String>
+        ): List<String> {
+                val recommendations = mutableListOf<String>()
+
+                // Overall classification
+                recommendations.add(
+                        "Your breathing shows signs of ${classification.lowercase()} patterns."
+                )
+                recommendations.add(
+                        "Breathing rate: ${breathingRate.toInt()} breaths/min (normal range: 12-20 breaths/min)."
+                )
+
+                // Specific condition recommendations
+                for (condition in detectedConditions) {
+                        when {
+                                condition.contains("Bradypnea") -> {
+                                        recommendations.add(
+                                                "You have bradypnea (abnormally slow breathing rate)."
+                                        )
+                                        recommendations.add(
+                                                "This can be associated with medication effects, neurological conditions, or sleep apnea."
+                                        )
+                                }
+                                condition.contains("Tachypnea") -> {
+                                        recommendations.add(
+                                                "You have tachypnea (abnormally rapid breathing rate)."
+                                        )
+                                        recommendations.add(
+                                                "This can be associated with anxiety, fever, respiratory infections, or cardiopulmonary issues."
+                                        )
+                                }
+                                condition.contains("amplitude variability") -> {
+                                        recommendations.add(
+                                                "Your breathing shows high amplitude variability (irregular breathing depth)."
+                                        )
+                                        recommendations.add(
+                                                "This can suggest respiratory muscle weakness or uneven airflow in the lungs."
+                                        )
+                                }
+                                condition.contains("timing variability") -> {
+                                        recommendations.add(
+                                                "Your breathing shows irregular rhythm with high timing variability."
+                                        )
+                                        recommendations.add(
+                                                "This can be associated with sleep-disordered breathing or respiratory control issues."
+                                        )
+                                }
+                        }
+                }
+
+                // Add general advice
+                if (classification != "Normal") {
+                        recommendations.add(
+                                "Consider consulting a healthcare professional for proper evaluation of these findings."
+                        )
+                        recommendations.add(
+                                "Regular breathing exercises and monitoring may help improve your respiratory function."
+                        )
+                } else {
+                        recommendations.add(
+                                "Continue to maintain good respiratory health through regular exercise and proper breathing techniques."
+                        )
+                }
+
+                return recommendations
+        }
+
         /** Releases resources */
         fun close() {
                 // Clean up resources if needed
@@ -226,6 +380,6 @@ class DiseaseClassifier(private val context: Context) {
         }
 
         companion object {
-                private const val TAG = "DiseaseClassifier"
+                private const val TAG = "DISEASE_CLASSIFIER"
         }
 }

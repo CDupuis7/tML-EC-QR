@@ -407,33 +407,162 @@ private fun ResultState(result: DiagnosisResult, onReset: () -> Unit) {
                                                 modifier = Modifier.padding(bottom = 8.dp)
                                         )
 
-                                        // Add interpretation of breathing rate
-                                        val rateInterpretation =
-                                                when {
-                                                        result.breathingRate < 12 ->
-                                                                "Slow breathing rate (bradypnea)"
-                                                        result.breathingRate > 20 ->
-                                                                "Rapid breathing rate (tachypnea)"
-                                                        else -> "Normal breathing rate"
-                                                }
+                                        // Add a card for detected conditions if any
+                                        if (result.detectedConditions.isNotEmpty()) {
+                                                Card(
+                                                        modifier =
+                                                                Modifier.fillMaxWidth()
+                                                                        .padding(vertical = 8.dp),
+                                                        colors =
+                                                                CardDefaults.cardColors(
+                                                                        containerColor =
+                                                                                Color(
+                                                                                        0xFFFFF3E0
+                                                                                ) // Light orange
+                                                                        // background
+                                                                        )
+                                                ) {
+                                                        Column(modifier = Modifier.padding(16.dp)) {
+                                                                Text(
+                                                                        text =
+                                                                                "Detected Conditions:",
+                                                                        style =
+                                                                                MaterialTheme
+                                                                                        .typography
+                                                                                        .titleMedium,
+                                                                        fontWeight =
+                                                                                FontWeight.Bold,
+                                                                        modifier =
+                                                                                Modifier.padding(
+                                                                                        bottom =
+                                                                                                8.dp
+                                                                                )
+                                                                )
 
-                                        Text(
-                                                text = rateInterpretation,
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                color =
-                                                        when {
-                                                                result.breathingRate < 12 ||
-                                                                        result.breathingRate > 20 ->
-                                                                        Color(
-                                                                                0xFFFF9800
-                                                                        ) // Orange for abnormal
-                                                                else ->
-                                                                        Color(
-                                                                                0xFF4CAF50
-                                                                        ) // Green for normal
-                                                        },
-                                                modifier = Modifier.padding(bottom = 8.dp)
-                                        )
+                                                                // Display each condition with
+                                                                // bullet points
+                                                                result.detectedConditions.forEach {
+                                                                        condition ->
+                                                                        Row(
+                                                                                modifier =
+                                                                                        Modifier.padding(
+                                                                                                vertical =
+                                                                                                        4.dp
+                                                                                        ),
+                                                                                verticalAlignment =
+                                                                                        Alignment
+                                                                                                .Top
+                                                                        ) {
+                                                                                Text(
+                                                                                        text = "•",
+                                                                                        style =
+                                                                                                MaterialTheme
+                                                                                                        .typography
+                                                                                                        .bodyMedium,
+                                                                                        modifier =
+                                                                                                Modifier.padding(
+                                                                                                        end =
+                                                                                                                8.dp,
+                                                                                                        top =
+                                                                                                                2.dp
+                                                                                                )
+                                                                                )
+                                                                                Text(
+                                                                                        text =
+                                                                                                condition,
+                                                                                        style =
+                                                                                                MaterialTheme
+                                                                                                        .typography
+                                                                                                        .bodyMedium
+                                                                                )
+                                                                        }
+                                                                }
+                                                        }
+                                                }
+                                        }
+
+                                        // Add detailed metrics
+                                        if (result.amplitudeVariability > 0 ||
+                                                        result.durationVariability > 0
+                                        ) {
+                                                Spacer(modifier = Modifier.height(8.dp))
+
+                                                Card(
+                                                        modifier =
+                                                                Modifier.fillMaxWidth()
+                                                                        .padding(vertical = 8.dp),
+                                                        colors =
+                                                                CardDefaults.cardColors(
+                                                                        containerColor =
+                                                                                Color(
+                                                                                        0xFFE3F2FD
+                                                                                ) // Light blue
+                                                                        // background
+                                                                        )
+                                                ) {
+                                                        Column(modifier = Modifier.padding(16.dp)) {
+                                                                Text(
+                                                                        text = "Breathing Metrics:",
+                                                                        style =
+                                                                                MaterialTheme
+                                                                                        .typography
+                                                                                        .titleMedium,
+                                                                        fontWeight =
+                                                                                FontWeight.Bold,
+                                                                        modifier =
+                                                                                Modifier.padding(
+                                                                                        bottom =
+                                                                                                8.dp
+                                                                                )
+                                                                )
+
+                                                                Text(
+                                                                        text =
+                                                                                "Amplitude Variability: ${String.format("%.2f", result.amplitudeVariability)}",
+                                                                        style =
+                                                                                MaterialTheme
+                                                                                        .typography
+                                                                                        .bodyMedium,
+                                                                        modifier =
+                                                                                Modifier.padding(
+                                                                                        vertical =
+                                                                                                2.dp
+                                                                                )
+                                                                )
+
+                                                                Text(
+                                                                        text =
+                                                                                "Duration Variability: ${String.format("%.2f", result.durationVariability)}",
+                                                                        style =
+                                                                                MaterialTheme
+                                                                                        .typography
+                                                                                        .bodyMedium,
+                                                                        modifier =
+                                                                                Modifier.padding(
+                                                                                        vertical =
+                                                                                                2.dp
+                                                                                )
+                                                                )
+
+                                                                // Interpretation of metrics
+                                                                Spacer(
+                                                                        modifier =
+                                                                                Modifier.height(
+                                                                                        8.dp
+                                                                                )
+                                                                )
+                                                                Text(
+                                                                        text =
+                                                                                "Amplitude variability reflects consistency in breathing depth. Duration variability indicates how regular your breathing rhythm is. Higher values suggest more irregularity.",
+                                                                        style =
+                                                                                MaterialTheme
+                                                                                        .typography
+                                                                                        .bodySmall,
+                                                                        color = Color.DarkGray
+                                                                )
+                                                        }
+                                                }
+                                        }
                                 }
 
                                 // Irregularity index

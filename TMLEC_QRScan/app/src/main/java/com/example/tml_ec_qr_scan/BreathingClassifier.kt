@@ -687,9 +687,9 @@ class BreathingClassifier(private val context: Context) {
         // Calculate smoothed velocity from recent movements
         val velocityHistory = recentMovements.map { it.velocity }
         val smoothedVelocity =
-                if (velocityHistory.size >= 2) {
-                    val recentValues = velocityHistory.takeLast(2)
-                    val weights = floatArrayOf(0.7f, 0.3f)
+                if (velocityHistory.size >= 3) { // Increased smoothing window
+                    val recentValues = velocityHistory.takeLast(3)
+                    val weights = floatArrayOf(0.6f, 0.3f, 0.1f) // More weight on recent values
                     var sum = 0f
                     recentValues.forEachIndexed { index, velocity ->
                         sum += velocity * weights[index]
@@ -699,16 +699,20 @@ class BreathingClassifier(private val context: Context) {
                     dataPoint.velocity
                 }
 
-        // Determine breathing phase using velocity direction only
+        // Determine breathing phase using velocity thresholds with wider pause range
         val (phase, confidence) =
                 when {
-                    smoothedVelocity <= 0f -> { // Using 0 as the threshold for inhaling
-                        val conf = ((abs(smoothedVelocity) + 1.5f) / 10f).coerceIn(0.5f, 1.0f)
+                    smoothedVelocity < -2.5f -> { // Require stronger negative velocity for inhaling
+                        val conf = ((abs(smoothedVelocity) - 2.5f) / 10f).coerceIn(0.5f, 1.0f)
                         Pair("inhaling", conf)
                     }
-                    else -> { // smoothedVelocity > 0f for exhaling
-                        val conf = ((abs(smoothedVelocity) + 1.5f) / 10f).coerceIn(0.5f, 1.0f)
+                    smoothedVelocity > 2.5f -> { // Require stronger positive velocity for exhaling
+                        val conf = ((abs(smoothedVelocity) - 2.5f) / 10f).coerceIn(0.5f, 1.0f)
                         Pair("exhaling", conf)
+                    }
+                    else -> { // Wider pause range (-2.5f to 2.5f)
+                        val conf = (1f - abs(smoothedVelocity) / 2.5f).coerceIn(0.3f, 0.7f)
+                        Pair("pause", conf)
                     }
                 }
 
@@ -737,8 +741,8 @@ class BreathingClassifier(private val context: Context) {
             currentPhase: String,
             velocity: Float
     ): String {
-        // If velocity is very clearly in one direction, always respect that
-        if (abs(velocity) > 5f) {
+        // If velocity is very clearly in one direction, respect that
+        if (abs(velocity) > 7f) {
             return currentPhase
         }
 
@@ -747,13 +751,13 @@ class BreathingClassifier(private val context: Context) {
         val lastChange = lastPhaseChangeTime[lastPhase] ?: 0L
         val timeSinceLastChange = currentTime - lastChange
 
-        // Minimum time in a phase before allowing changes (300ms)
-        val MIN_PHASE_DURATION = 300L
+        // Longer minimum time in a phase (500ms instead of 300ms)
+        val MIN_PHASE_DURATION = 500L
 
         // Don't change too quickly unless velocity is significant
         if (lastPhase != currentPhase &&
                         timeSinceLastChange < MIN_PHASE_DURATION &&
-                        abs(velocity) < 3f
+                        abs(velocity) < 4f
         ) {
             return lastPhase
         }
@@ -763,7 +767,22 @@ class BreathingClassifier(private val context: Context) {
             lastPhaseChangeTime[currentPhase] = currentTime
         }
 
-        return currentPhase
+        // Natural breathing cycle: inhale -> pause -> exhale -> pause -> inhale
+        return when {
+            // Prevent direct inhale -> exhale transitions
+            lastPhase == "inhaling" && currentPhase == "exhaling" -> "pause"
+
+            // Prevent direct exhale -> inhale transitions
+            lastPhase == "exhaling" && currentPhase == "inhaling" -> "pause"
+
+            // Limit how long we stay in pause - but not too short
+            lastPhase == "pause" && currentPhase == "pause" && timeSinceLastChange > 1000 -> {
+                if (velocity < -1.5f) "inhaling" else if (velocity > 1.5f) "exhaling" else "pause"
+            }
+
+            // Otherwise use the classified phase
+            else -> currentPhase
+        }
     }
 
     /** Release resources when no longer needed */
