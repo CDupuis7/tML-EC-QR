@@ -48,7 +48,6 @@ import androidx.core.content.ContextCompat
 import boofcv.android.ConvertBitmap
 import boofcv.factory.fiducial.FactoryFiducial
 import boofcv.struct.image.GrayU8
-import com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
@@ -1343,58 +1342,112 @@ class MainActivity : ComponentActivity() {
 
         /** Calculate breathing metrics from respiratory data points */
         private fun calculateBreathingMetrics(data: List<RespiratoryDataPoint>): BreathingMetrics {
-                if (data.isEmpty()) {
+                if (data.size < 20) {
                         return BreathingMetrics(0f, 0f, 0f, 0f, 0)
                 }
 
                 // Extract amplitudes for analysis
                 val amplitudes = data.map { it.amplitude }
                 val timestamps = data.map { it.timestamp }
-                val phases = data.map { it.breathingPhase.lowercase() }
 
                 // Calculate basic statistics
                 val averageAmplitude = amplitudes.average().toFloat()
                 val maxAmplitude = amplitudes.maxOrNull() ?: 0f
                 val minAmplitude = amplitudes.minOrNull() ?: 0f
 
-                // Calculate duration in minutes for breathing rate
-                val durationInMinutes =
-                        if (data.size > 1) {
-                                (data.last().timestamp - data.first().timestamp) / (1000f * 60f)
+                // Group data points into time windows to smooth out rapid fluctuations
+                val timeWindowSize = 300 // 300ms windows
+                val timeWindows = mutableListOf<Pair<Long, String>>()
+
+                var currentWindowStart = data.first().timestamp
+                var currentWindowEnd = currentWindowStart + timeWindowSize
+                var currentWindowPhases = mutableListOf<String>()
+
+                // Group data into time windows and determine dominant phase per window
+                for (point in data) {
+                        if (point.timestamp <= currentWindowEnd) {
+                                currentWindowPhases.add(point.breathingPhase.lowercase())
                         } else {
-                                0.01f // Prevent division by zero
-                        }
+                                // Determine dominant phase for this window
+                                val dominantPhase =
+                                        currentWindowPhases
+                                                .groupBy { it }
+                                                .maxByOrNull { it.value.size }
+                                                ?.key
+                                                ?: "pause"
 
-                // Count complete breathing cycles (inhale + exhale = 1 breath)
-                var breathCount = 0
+                                timeWindows.add(Pair(currentWindowStart, dominantPhase))
+
+                                // Start new window
+                                currentWindowStart = point.timestamp
+                                currentWindowEnd = currentWindowStart + timeWindowSize
+                                currentWindowPhases =
+                                        mutableListOf(point.breathingPhase.lowercase())
+                        }
+                }
+
+                // Add final window if not empty
+                if (currentWindowPhases.isNotEmpty()) {
+                        val dominantPhase =
+                                currentWindowPhases
+                                        .groupBy { it }
+                                        .maxByOrNull { it.value.size }
+                                        ?.key
+                                        ?: "pause"
+                        timeWindows.add(Pair(currentWindowStart, dominantPhase))
+                }
+
+                // Count cycles using the time windows (smoothed phases)
                 var prevPhase = ""
+                var inhaleSeen = false
+                var exhaleSeen = false
+                var breathCount = 0
 
-                // Count transitions from exhaling to inhaling as full cycles
-                for (phase in phases) {
-                        if (prevPhase == "exhaling" && phase == "inhaling") {
-                                breathCount++
+                for ((timestamp, phase) in timeWindows) {
+                        // If we see inhale followed by exhale, mark them as seen
+                        if (phase == "inhaling") {
+                                inhaleSeen = true
+                        } else if (phase == "exhaling" && inhaleSeen) {
+                                exhaleSeen = true
                         }
+
+                        // When we see inhale again after having seen both inhale and exhale, count
+                        // a cycle
+                        if (phase == "inhaling" &&
+                                        prevPhase != "inhaling" &&
+                                        inhaleSeen &&
+                                        exhaleSeen
+                        ) {
+                                breathCount++
+                                Log.d(
+                                        "RespiratoryTracking",
+                                        "FULL CYCLE DETECTED #$breathCount at $timestamp"
+                                )
+                                inhaleSeen = true // Reset exhale but keep inhale true
+                                exhaleSeen = false
+                        }
+
                         prevPhase = phase
                 }
 
-                // Log for debugging
-                Log.d("RespiratoryTracking", "Total breathing cycles counted: $breathCount")
-                Log.d(
-                        "RespiratoryTracking",
-                        "Recording duration: ${durationInMinutes * 60} seconds (${durationInMinutes} minutes)"
-                )
+                // Calculate duration in minutes
+                val durationMs = data.last().timestamp - data.first().timestamp
+                val durationMinutes = durationMs / 60000f // Convert ms to minutes
 
-                // Calculate breathing rate from detected breaths (no upper limit)
+                // Calculate breathing rate with physiological constraints
                 val breathingRate =
-                        if (durationInMinutes > 0 && breathCount > 0) {
-                                breathCount / durationInMinutes // No coerceIn to allow full range
+                        if (durationMinutes > 0 && breathCount > 0) {
+                                (breathCount / durationMinutes).coerceIn(
+                                        8f,
+                                        30f
+                                ) // Reasonable human limits
                         } else {
                                 0f
                         }
 
                 Log.d(
                         "RespiratoryTracking",
-                        "Final calculated breathing rate: $breathingRate breaths/minute"
+                        "Breathing Analysis: Count=$breathCount, Rate=$breathingRate, Duration=${durationMinutes * 60} seconds"
                 )
 
                 return BreathingMetrics(

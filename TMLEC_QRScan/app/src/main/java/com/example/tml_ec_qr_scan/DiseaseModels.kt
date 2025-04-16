@@ -17,9 +17,12 @@ sealed class DiseaseUiState {
 
 /** Data class representing the result of respiratory disease analysis */
 data class DiagnosisResult(
-        val classification: String, // Previously "condition"
+        val classification: String, // "Normal" or "Abnormal"
         val confidence: Float,
         val breathingRate: Float,
         val irregularityIndex: Float,
-        val recommendations: List<String>
+        val recommendations: List<String>,
+        val detectedConditions: List<String> = emptyList(), // New parameter for specific conditions
+        val amplitudeVariability: Float = 0f, // Add amplitude variability
+        val durationVariability: Float = 0f // Add duration variability
 )

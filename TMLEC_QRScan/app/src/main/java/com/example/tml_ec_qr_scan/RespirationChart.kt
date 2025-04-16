@@ -37,6 +37,42 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import kotlin.math.abs
 
+// New function to smooth the respiratory data
+fun smoothRespiratoryData(
+        data: List<RespiratoryDataPoint>,
+        windowSize: Int = 5
+): List<RespiratoryDataPoint> {
+        if (data.size <= windowSize) return data
+
+        val smoothedData = mutableListOf<RespiratoryDataPoint>()
+
+        // Using a simple moving average for velocity values
+        for (i in data.indices) {
+                val start = maxOf(0, i - windowSize / 2)
+                val end = minOf(data.size - 1, i + windowSize / 2)
+                val windowPoints = data.subList(start, end + 1)
+
+                val avgVelocity = windowPoints.map { it.velocity }.average().toFloat()
+
+                // Create a new data point with the smoothed velocity but keeping all other original
+                // values
+                val original = data[i]
+                smoothedData.add(
+                        RespiratoryDataPoint(
+                                timestamp = original.timestamp,
+                                position = original.position,
+                                qrId = original.qrId,
+                                movement = original.movement,
+                                breathingPhase = original.breathingPhase,
+                                amplitude = original.amplitude,
+                                velocity = avgVelocity
+                        )
+                )
+        }
+
+        return smoothedData
+}
+
 @Composable
 fun RespirationChart(
         respiratoryData: List<RespiratoryDataPoint>,
@@ -63,6 +99,15 @@ fun RespirationChart(
 
         // State for canvas size
         var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
+
+        // Apply smoothing to respiratory data
+        val smoothedData =
+                remember(respiratoryData) {
+                        smoothRespiratoryData(
+                                respiratoryData,
+                                7
+                        ) // Increased window size for stronger smoothing
+                }
 
         // Define colors for different breathing phases
         val inhaleColor = Color(0xFF81C784) // Green for inhaling

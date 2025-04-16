@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -734,9 +735,7 @@ fun ResultsScreen(
                 )
 
                 // Display breathing classification result
-                if (breathingClassification != "Unknown" &&
-                                breathingClassification != "Analyzing..."
-                ) {
+                if (breathingClassification != "Unknown") {
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Card(
@@ -753,10 +752,27 @@ fun ResultsScreen(
                                                                         Color(
                                                                                 0xFFFFF3E0
                                                                         ) // Light orange
-                                                                else ->
+                                                                "Analyzing..." ->
+                                                                        Color(
+                                                                                0xFFE1F5FE
+                                                                        ) // Light blue
+                                                                "Error", "Analysis Error" ->
                                                                         Color(
                                                                                 0xFFFFEBEE
                                                                         ) // Light red for errors
+                                                                "Insufficient Data",
+                                                                "Insufficient Breathing Cycles",
+                                                                "Recording Too Short",
+                                                                "Inconsistent Breathing Phases",
+                                                                "No Data Collected" ->
+                                                                        Color(
+                                                                                0xFFF5F5F5
+                                                                        ) // Light gray for
+                                                                // insufficient data
+                                                                else ->
+                                                                        Color(
+                                                                                0xFFE0F7FA
+                                                                        ) // Light cyan for others
                                                         }
                                         )
                         ) {
@@ -771,37 +787,84 @@ fun ResultsScreen(
 
                                         Spacer(modifier = Modifier.height(8.dp))
 
-                                        Text(
-                                                text = breathingClassification,
-                                                style =
-                                                        MaterialTheme.typography.headlineSmall.copy(
-                                                                fontWeight = FontWeight.Bold
-                                                        ),
-                                                color =
-                                                        when (breathingClassification) {
-                                                                "Normal" ->
-                                                                        Color(0xFF4CAF50) // Green
-                                                                "Abnormal" ->
-                                                                        Color(0xFFFF9800) // Orange
-                                                                else -> Color(0xFFF44336) // Red
-                                                        }
-                                        )
+                                        // Show loading indicator if still analyzing
+                                        if (breathingClassification == "Analyzing...") {
+                                                CircularProgressIndicator(
+                                                        modifier = Modifier.size(48.dp),
+                                                        color = Color(0xFF2196F3)
+                                                )
+                                                Text(
+                                                        text = "Analyzing breathing pattern...",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        modifier = Modifier.padding(top = 8.dp)
+                                                )
+                                        } else {
+                                                Text(
+                                                        text = breathingClassification,
+                                                        style =
+                                                                MaterialTheme.typography
+                                                                        .headlineSmall.copy(
+                                                                        fontWeight = FontWeight.Bold
+                                                                ),
+                                                        color =
+                                                                when (breathingClassification) {
+                                                                        "Normal" ->
+                                                                                Color(
+                                                                                        0xFF4CAF50
+                                                                                ) // Green
+                                                                        "Abnormal" ->
+                                                                                Color(
+                                                                                        0xFFFF9800
+                                                                                ) // Orange
+                                                                        "Error", "Analysis Error" ->
+                                                                                Color(
+                                                                                        0xFFF44336
+                                                                                ) // Red
+                                                                        "Insufficient Data",
+                                                                        "No Data Collected" ->
+                                                                                Color(
+                                                                                        0xFF9E9E9E
+                                                                                ) // Gray
+                                                                        else ->
+                                                                                Color(
+                                                                                        0xFF03A9F4
+                                                                                ) // Blue
+                                                                }
+                                                )
 
-                                        Text(
-                                                text =
-                                                        "Confidence: ${(classificationConfidence * 100).toInt()}%",
-                                                style = MaterialTheme.typography.bodyMedium
-                                        )
+                                                // Only show confidence if it's meaningful
+                                                if (classificationConfidence > 0.1f &&
+                                                                !breathingClassification.startsWith(
+                                                                        "Insufficient"
+                                                                ) &&
+                                                                !breathingClassification.startsWith(
+                                                                        "Error"
+                                                                ) &&
+                                                                !breathingClassification.contains(
+                                                                        "No Data"
+                                                                )
+                                                ) {
+                                                        Text(
+                                                                text =
+                                                                        "Confidence: ${(classificationConfidence * 100).toInt()}%",
+                                                                style =
+                                                                        MaterialTheme.typography
+                                                                                .bodyMedium
+                                                        )
+                                                }
+                                        }
 
                                         // Add breathing rate display
                                         val breathingRate =
                                                 viewModel.breathingRate.collectAsState().value
-                                        Text(
-                                                text =
-                                                        "Breathing Rate: ${String.format("%.2f", breathingRate)} breaths/min",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.Bold
-                                        )
+                                        if (breathingRate > 0) {
+                                                Text(
+                                                        text =
+                                                                "Breathing Rate: ${String.format("%.2f", breathingRate)} breaths/min",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.Bold
+                                                )
+                                        }
 
                                         Spacer(modifier = Modifier.height(8.dp))
 
@@ -813,11 +876,25 @@ fun ResultsScreen(
                                                                         "Regular breathing pattern within normal range (12-20 breaths/minute)"
                                                                 "Abnormal" ->
                                                                         "Breathing rate outside normal range (12-20 breaths/minute)"
+                                                                "Analyzing..." ->
+                                                                        "Please wait while we analyze your breathing pattern"
+                                                                "Insufficient Data",
+                                                                "No Data Collected" ->
+                                                                        "Not enough data collected for analysis. Try recording for a longer period."
+                                                                "Insufficient Breathing Cycles" ->
+                                                                        "Not enough complete breathing cycles detected. Try breathing more consistently."
+                                                                "Recording Too Short" ->
+                                                                        "Recording time was too short. Try recording for at least 15-30 seconds."
+                                                                "Inconsistent Breathing Phases" ->
+                                                                        "Could not detect a consistent inhale-exhale pattern. Try positioning the QR code better."
+                                                                "Error", "Analysis Error" ->
+                                                                        "An error occurred during analysis. Please try recording again."
                                                                 else ->
-                                                                        "Unable to classify breathing pattern"
+                                                                        "Classification result: $breathingClassification"
                                                         },
                                                 style = MaterialTheme.typography.bodyMedium,
-                                                modifier = Modifier.padding(vertical = 4.dp)
+                                                modifier = Modifier.padding(vertical = 4.dp),
+                                                textAlign = TextAlign.Center
                                         )
                                 }
                         }
