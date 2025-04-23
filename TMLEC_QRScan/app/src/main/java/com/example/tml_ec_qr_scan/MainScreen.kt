@@ -4,6 +4,7 @@ package com.example.tml_ec_qr_scan
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -12,10 +13,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
 // CompositionLocal to provide ViewModel access in nested composables
@@ -695,85 +697,110 @@ fun ResultsScreen(
         onSaveGraph: () -> Unit,
         onReturnToCameraSetup: () -> Unit
 ) {
-        // Access the ViewModel from the CompositionLocal
         val viewModel = LocalViewModel.current
+        val breathingRate by viewModel.breathingRate.collectAsState()
+        val breathingClassification by viewModel.breathingClassification.collectAsState()
+        val classificationConfidence by viewModel.classificationConfidence.collectAsState()
 
-        // Access the breathing classification state
-        val breathingClassification = viewModel.breathingClassification.collectAsState().value
-        val classificationConfidence = viewModel.classificationConfidence.collectAsState().value
+        // State for recommendations dialog
+        var showRecommendationsDialog by remember { mutableStateOf(false) }
+
+        // State for graph dialog
+        var showGraphDialog by remember { mutableStateOf(false) }
+
+        // Extract detected conditions and other assessment details
+        val detectedConditions =
+                remember(breathingRate, breathingClassification) {
+                        mutableListOf<String>().apply {
+                                // Check for tachypnea (fast breathing)
+                                if (breathingRate > 24f) {
+                                        add("TACHYPNEA (fast breathing)")
+                                }
+                                // Check for bradypnea (slow breathing)
+                                else if (breathingRate < 10f) {
+                                        add("BRADYPNEA (slow breathing)")
+                                }
+
+                                // Add other detected conditions from assessed data
+                                // This needs to match conditions detected in BreathingClassifier.kt
+                                val irregularityIndex = respiratoryData.calculateIrregularityIndex()
+                                val amplitudeVariation =
+                                        respiratoryData.calculateAmplitudeVariation()
+
+                                if (irregularityIndex > 0.4f) {
+                                        add("HIGH IRREGULARITY (breathing rhythm variability)")
+                                }
+
+                                if (amplitudeVariation > 40f) {
+                                        add("HIGH AMPLITUDE VARIATION (inconsistent breath depth)")
+                                }
+                        }
+                }
+
+        // Generate recommendations based on detected conditions
+        val recommendations =
+                remember(detectedConditions) {
+                        mutableListOf<String>().apply {
+                                if (detectedConditions.isEmpty()) {
+                                        add("Continue with healthy breathing practices")
+                                } else {
+                                        if (detectedConditions.any { it.contains("TACHYPNEA") }) {
+                                                add(
+                                                        "Try slow breathing exercises to reduce your breathing rate"
+                                                )
+                                                add(
+                                                        "Practice diaphragmatic breathing to regulate breath pace"
+                                                )
+                                        }
+
+                                        if (detectedConditions.any { it.contains("BRADYPNEA") }) {
+                                                add(
+                                                        "Practice respiratory exercises to normalize breathing rate"
+                                                )
+                                                add(
+                                                        "Monitor for associated symptoms like dizziness or fatigue"
+                                                )
+                                        }
+
+                                        if (detectedConditions.any { it.contains("IRREGULARITY") }
+                                        ) {
+                                                add(
+                                                        "Practice rhythmic breathing exercises for consistency"
+                                                )
+                                        }
+
+                                        if (detectedConditions.any { it.contains("AMPLITUDE") }) {
+                                                add(
+                                                        "Focus on consistent breath depth during breathing exercises"
+                                                )
+                                        }
+
+                                        add(
+                                                "Consider consulting a healthcare professional for a complete evaluation"
+                                        )
+                                }
+                        }
+                }
 
         Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                modifier = Modifier.fillMaxSize().padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
                 Text(
-                        text = "Recording Results",
+                        text = "Breathing Assessment Results",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color(0xFF2196F3)
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Display patient info
-                patientMetadata?.let {
-                        Text(
-                                text = "Patient: ${it.id}",
-                                style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                                text = "Age: ${it.age}, Gender: ${it.gender}",
-                                style = MaterialTheme.typography.bodyMedium
-                        )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Show recording stats
-                Text(
-                        text = "Data Points: ${respiratoryData.size}",
-                        style = MaterialTheme.typography.bodyMedium
-                )
-
-                // Display breathing classification result
-                if (breathingClassification != "Unknown") {
-                        Spacer(modifier = Modifier.height(16.dp))
-
+                // Display patient information
+                if (patientMetadata != null) {
                         Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors =
                                         CardDefaults.cardColors(
                                                 containerColor =
-                                                        when (breathingClassification) {
-                                                                "Normal" ->
-                                                                        Color(
-                                                                                0xFFE8F5E9
-                                                                        ) // Light green
-                                                                "Abnormal" ->
-                                                                        Color(
-                                                                                0xFFFFF3E0
-                                                                        ) // Light orange
-                                                                "Analyzing..." ->
-                                                                        Color(
-                                                                                0xFFE1F5FE
-                                                                        ) // Light blue
-                                                                "Error", "Analysis Error" ->
-                                                                        Color(
-                                                                                0xFFFFEBEE
-                                                                        ) // Light red for errors
-                                                                "Insufficient Data",
-                                                                "Insufficient Breathing Cycles",
-                                                                "Recording Too Short",
-                                                                "Inconsistent Breathing Phases",
-                                                                "No Data Collected" ->
-                                                                        Color(
-                                                                                0xFFF5F5F5
-                                                                        ) // Light gray for
-                                                                // insufficient data
-                                                                else ->
-                                                                        Color(
-                                                                                0xFFE0F7FA
-                                                                        ) // Light cyan for others
-                                                        }
+                                                        MaterialTheme.colorScheme.surfaceVariant
                                         )
                         ) {
                                 Column(
@@ -781,120 +808,18 @@ fun ResultsScreen(
                                         horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                         Text(
-                                                text = "Breathing Assessment",
-                                                style = MaterialTheme.typography.titleMedium
+                                                text = "Patient: ${patientMetadata.id}",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                modifier = Modifier.padding(bottom = 4.dp)
                                         )
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-
-                                        // Show loading indicator if still analyzing
-                                        if (breathingClassification == "Analyzing...") {
-                                                CircularProgressIndicator(
-                                                        modifier = Modifier.size(48.dp),
-                                                        color = Color(0xFF2196F3)
-                                                )
-                                                Text(
-                                                        text = "Analyzing breathing pattern...",
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        modifier = Modifier.padding(top = 8.dp)
-                                                )
-                                        } else {
-                                                Text(
-                                                        text = breathingClassification,
-                                                        style =
-                                                                MaterialTheme.typography
-                                                                        .headlineSmall.copy(
-                                                                        fontWeight = FontWeight.Bold
-                                                                ),
-                                                        color =
-                                                                when (breathingClassification) {
-                                                                        "Normal" ->
-                                                                                Color(
-                                                                                        0xFF4CAF50
-                                                                                ) // Green
-                                                                        "Abnormal" ->
-                                                                                Color(
-                                                                                        0xFFFF9800
-                                                                                ) // Orange
-                                                                        "Error", "Analysis Error" ->
-                                                                                Color(
-                                                                                        0xFFF44336
-                                                                                ) // Red
-                                                                        "Insufficient Data",
-                                                                        "No Data Collected" ->
-                                                                                Color(
-                                                                                        0xFF9E9E9E
-                                                                                ) // Gray
-                                                                        else ->
-                                                                                Color(
-                                                                                        0xFF03A9F4
-                                                                                ) // Blue
-                                                                }
-                                                )
-
-                                                // Only show confidence if it's meaningful
-                                                if (classificationConfidence > 0.1f &&
-                                                                !breathingClassification.startsWith(
-                                                                        "Insufficient"
-                                                                ) &&
-                                                                !breathingClassification.startsWith(
-                                                                        "Error"
-                                                                ) &&
-                                                                !breathingClassification.contains(
-                                                                        "No Data"
-                                                                )
-                                                ) {
-                                                        Text(
-                                                                text =
-                                                                        "Confidence: ${(classificationConfidence * 100).toInt()}%",
-                                                                style =
-                                                                        MaterialTheme.typography
-                                                                                .bodyMedium
-                                                        )
-                                                }
-                                        }
-
-                                        // Add breathing rate display
-                                        val breathingRate =
-                                                viewModel.breathingRate.collectAsState().value
-                                        if (breathingRate > 0) {
-                                                Text(
-                                                        text =
-                                                                "Breathing Rate: ${String.format("%.2f", breathingRate)} breaths/min",
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        fontWeight = FontWeight.Bold
-                                                )
-                                        }
-
-                                        Spacer(modifier = Modifier.height(8.dp))
-
-                                        // Add interpretation text
                                         Text(
                                                 text =
-                                                        when (breathingClassification) {
-                                                                "Normal" ->
-                                                                        "Regular breathing pattern within normal range (12-20 breaths/minute)"
-                                                                "Abnormal" ->
-                                                                        "Breathing rate outside normal range (12-20 breaths/minute)"
-                                                                "Analyzing..." ->
-                                                                        "Please wait while we analyze your breathing pattern"
-                                                                "Insufficient Data",
-                                                                "No Data Collected" ->
-                                                                        "Not enough data collected for analysis. Try recording for a longer period."
-                                                                "Insufficient Breathing Cycles" ->
-                                                                        "Not enough complete breathing cycles detected. Try breathing more consistently."
-                                                                "Recording Too Short" ->
-                                                                        "Recording time was too short. Try recording for at least 15-30 seconds."
-                                                                "Inconsistent Breathing Phases" ->
-                                                                        "Could not detect a consistent inhale-exhale pattern. Try positioning the QR code better."
-                                                                "Error", "Analysis Error" ->
-                                                                        "An error occurred during analysis. Please try recording again."
-                                                                else ->
-                                                                        "Classification result: $breathingClassification"
-                                                        },
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                modifier = Modifier.padding(vertical = 4.dp),
-                                                textAlign = TextAlign.Center
+                                                        "Age: ${patientMetadata.age}, Gender: ${patientMetadata.gender}",
+                                                style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                                text = "Data Points: ${respiratoryData.size}",
+                                                style = MaterialTheme.typography.bodyMedium
                                         )
                                 }
                         }
@@ -902,14 +827,190 @@ fun ResultsScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Add chart for visualization with id for saving
-                Box(modifier = Modifier.fillMaxWidth().height(200.dp).padding(vertical = 16.dp)) {
-                        RespirationChart(respiratoryData = respiratoryData, id = "chart_container")
+                // Breathing Classification Result
+                Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors =
+                                CardDefaults.cardColors(
+                                        containerColor =
+                                                when (breathingClassification.lowercase()) {
+                                                        "normal" ->
+                                                                Color(
+                                                                        0xFFE8F5E9
+                                                                ) // Light green background
+                                                        else ->
+                                                                Color(
+                                                                        0xFFFFF3E0
+                                                                ) // Light orange for abnormal
+                                                }
+                                )
+                ) {
+                        Column(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                                Text(
+                                        text = "Breathing Assessment",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        modifier = Modifier.padding(bottom = 16.dp)
+                                )
+
+                                Text(
+                                        text = breathingClassification,
+                                        style = MaterialTheme.typography.displaySmall,
+                                        color =
+                                                when (breathingClassification.lowercase()) {
+                                                        "normal" ->
+                                                                Color(
+                                                                        0xFF4CAF50
+                                                                ) // Green for normal
+                                                        else ->
+                                                                Color(
+                                                                        0xFFFF9800
+                                                                ) // Orange for abnormal
+                                                },
+                                        fontWeight = FontWeight.Bold
+                                )
+
+                                Text(
+                                        text =
+                                                "Confidence: ${(classificationConfidence * 100).toInt()}%",
+                                        style = MaterialTheme.typography.bodyLarge
+                                )
+
+                                Text(
+                                        text =
+                                                "Breathing Rate: ${String.format("%.2f", breathingRate)} breaths/min",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(top = 8.dp)
+                                )
+
+                                // Display normal range
+                                Text(
+                                        text =
+                                                "Breathing rate ${if (breathingRate >= 10f && breathingRate <= 24f) "within" else "outside"} normal range (10-24 breaths/minute)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.padding(vertical = 8.dp)
+                                )
+
+                                // Display detected conditions if any
+                                if (detectedConditions.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Card(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors =
+                                                        CardDefaults.cardColors(
+                                                                containerColor =
+                                                                        Color(
+                                                                                0xFFFCE4EC
+                                                                        ) // Light pink background
+                                                        )
+                                        ) {
+                                                Column(modifier = Modifier.padding(16.dp)) {
+                                                        Text(
+                                                                text = "Detected Conditions:",
+                                                                style =
+                                                                        MaterialTheme.typography
+                                                                                .titleMedium,
+                                                                fontWeight = FontWeight.Bold,
+                                                                modifier =
+                                                                        Modifier.padding(
+                                                                                bottom = 8.dp
+                                                                        )
+                                                        )
+
+                                                        // List each detected condition
+                                                        detectedConditions.forEach { condition ->
+                                                                Row(
+                                                                        modifier =
+                                                                                Modifier.padding(
+                                                                                        vertical =
+                                                                                                4.dp
+                                                                                ),
+                                                                        verticalAlignment =
+                                                                                Alignment
+                                                                                        .CenterVertically
+                                                                ) {
+                                                                        Text(
+                                                                                text = "•",
+                                                                                style =
+                                                                                        MaterialTheme
+                                                                                                .typography
+                                                                                                .bodyLarge,
+                                                                                modifier =
+                                                                                        Modifier.padding(
+                                                                                                end =
+                                                                                                        8.dp
+                                                                                        )
+                                                                        )
+                                                                        Text(
+                                                                                text = condition,
+                                                                                style =
+                                                                                        MaterialTheme
+                                                                                                .typography
+                                                                                                .bodyMedium,
+                                                                                fontWeight =
+                                                                                        FontWeight
+                                                                                                .Bold,
+                                                                                color =
+                                                                                        Color(
+                                                                                                0xFFF44336
+                                                                                        ) // Red
+                                                                                // text
+                                                                                )
+                                                                }
+                                                        }
+                                                }
+                                        }
+                                }
+
+                                // Action buttons inside the assessment card
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceEvenly
+                                ) {
+                                        // View Respiratory Graph button
+                                        Button(
+                                                onClick = { showGraphDialog = true },
+                                                colors =
+                                                        ButtonDefaults.buttonColors(
+                                                                containerColor =
+                                                                        Color(
+                                                                                0xFF673AB7
+                                                                        ) // Deep purple
+                                                        ),
+                                                modifier = Modifier.weight(1f).padding(end = 4.dp)
+                                        ) { Text("View Graph", fontSize = 14.sp) }
+
+                                        // Recommendations button (only if recommendations exist)
+                                        if (recommendations.isNotEmpty()) {
+                                                Button(
+                                                        onClick = {
+                                                                showRecommendationsDialog = true
+                                                        },
+                                                        colors =
+                                                                ButtonDefaults.buttonColors(
+                                                                        containerColor =
+                                                                                Color(
+                                                                                        0xFF3F51B5
+                                                                                ) // Indigo
+                                                                ),
+                                                        modifier =
+                                                                Modifier.weight(1f)
+                                                                        .padding(start = 4.dp)
+                                                ) { Text("Recommendations", fontSize = 14.sp) }
+                                        }
+                                }
+                        }
                 }
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // Control buttons row 1
+                // Action buttons - using the original layout
                 Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -921,7 +1022,7 @@ fun ResultsScreen(
                                         ButtonDefaults.buttonColors(
                                                 containerColor = Color(0xFF4CAF50)
                                         )
-                        ) { Text(text = "Save Data") }
+                        ) { Text("Save Data") }
 
                         Button(
                                 onClick = onSaveGraph,
@@ -930,22 +1031,364 @@ fun ResultsScreen(
                                         ButtonDefaults.buttonColors(
                                                 containerColor = Color(0xFF009688)
                                         )
-                        ) { Text(text = "Save Graph") }
+                        ) { Text("Save Graph") }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Control buttons row 2
                 Button(
-                        onClick = onReturnToCameraSetup,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        onClick = onStartRecording,
+                        modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
-                ) { Text(text = "Record Again") }
+                ) { Text("Record Again") }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Button(
                         onClick = onNewPatient,
-                        modifier = Modifier.fillMaxWidth().height(48.dp).padding(top = 8.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
-                ) { Text(text = "New Patient") }
+                ) { Text("New Patient") }
+        }
+
+        // Recommendations Dialog
+        if (showRecommendationsDialog) {
+                androidx.compose.ui.window.Dialog(
+                        onDismissRequest = { showRecommendationsDialog = false }
+                ) {
+                        Card(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors =
+                                        CardDefaults.cardColors(
+                                                containerColor =
+                                                        Color(0xFFE3F2FD) // Light blue background
+                                        )
+                        ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                        Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                                Text(
+                                                        text = "Recommendations",
+                                                        style = MaterialTheme.typography.titleLarge,
+                                                        fontWeight = FontWeight.Bold
+                                                )
+
+                                                // Close button
+                                                IconButton(
+                                                        onClick = {
+                                                                showRecommendationsDialog = false
+                                                        }
+                                                ) { Text("✕", fontSize = 24.sp) }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        // List each recommendation
+                                        recommendations.forEach { recommendation ->
+                                                Row(
+                                                        modifier =
+                                                                Modifier.padding(vertical = 4.dp),
+                                                        verticalAlignment = Alignment.Top
+                                                ) {
+                                                        Text(
+                                                                text = "•",
+                                                                style =
+                                                                        MaterialTheme.typography
+                                                                                .bodyLarge,
+                                                                modifier =
+                                                                        Modifier.padding(
+                                                                                end = 8.dp,
+                                                                                top = 2.dp
+                                                                        )
+                                                        )
+                                                        Text(
+                                                                text = recommendation,
+                                                                style =
+                                                                        MaterialTheme.typography
+                                                                                .bodyMedium
+                                                        )
+                                                }
+                                        }
+
+                                        // Disclaimer
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                                text =
+                                                        "Note: This is not a medical diagnosis. Consult a healthcare professional for proper evaluation.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontStyle =
+                                                        androidx.compose.ui.text.font.FontStyle
+                                                                .Italic,
+                                                color = Color.Gray
+                                        )
+                                }
+                        }
+                }
+        }
+
+        // Graph Dialog - using the original RespirationChart component
+        if (showGraphDialog) {
+                androidx.compose.ui.window.Dialog(onDismissRequest = { showGraphDialog = false }) {
+                        Card(
+                                modifier =
+                                        Modifier.fillMaxWidth()
+                                                .fillMaxHeight(0.8f) // Use 80% of screen height
+                                                .padding(8.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors =
+                                        CardDefaults.cardColors(
+                                                containerColor =
+                                                        Color(
+                                                                0xFF212121
+                                                        ) // Dark background for graph
+                                        )
+                        ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                        Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                                Text(
+                                                        text = "Respiratory Graph",
+                                                        style = MaterialTheme.typography.titleLarge,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White
+                                                )
+
+                                                // Close button
+                                                IconButton(onClick = { showGraphDialog = false }) {
+                                                        Text(
+                                                                "✕",
+                                                                fontSize = 24.sp,
+                                                                color = Color.White
+                                                        )
+                                                }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        // Original RespirationChart (a scrollable visualization
+                                        // with phase colors)
+                                        if (respiratoryData.isNotEmpty()) {
+                                                RespirationChart(
+                                                        respiratoryData = respiratoryData,
+                                                        modifier =
+                                                                Modifier.fillMaxWidth().weight(1f)
+                                                )
+                                        } else {
+                                                Box(
+                                                        modifier =
+                                                                Modifier.fillMaxWidth()
+                                                                        .weight(1f)
+                                                                        .background(Color.Black),
+                                                        contentAlignment = Alignment.Center
+                                                ) {
+                                                        Text(
+                                                                "No respiratory data available",
+                                                                color = Color.White
+                                                        )
+                                                }
+                                        }
+                                }
+                        }
+                }
+        }
+}
+
+// Helper extension functions
+private fun List<RespiratoryDataPoint>.calculateIrregularityIndex(): Float {
+        if (this.isEmpty()) return 0f
+
+        // Calculate time intervals between phase changes
+        val phaseChanges = mutableListOf<Long>()
+        var lastPhase = ""
+
+        this.forEach { point ->
+                if (point.breathingPhase != lastPhase && lastPhase.isNotEmpty()) {
+                        phaseChanges.add(point.timestamp)
+                }
+                lastPhase = point.breathingPhase
+        }
+
+        // Calculate coefficient of variation for intervals
+        if (phaseChanges.size < 2) return 0f
+
+        val intervals = mutableListOf<Float>()
+        for (i in 1 until phaseChanges.size) {
+                intervals.add((phaseChanges[i] - phaseChanges[i - 1]).toFloat())
+        }
+
+        val mean = intervals.average().toFloat()
+        if (mean == 0f) return 0f
+
+        val variance = intervals.map { (it - mean) * (it - mean) }.average().toFloat()
+        val stdDev = kotlin.math.sqrt(variance)
+
+        // Return coefficient of variation (CV = stdDev / mean)
+        // Capped at 1.0 for UI purposes
+        return (stdDev / mean).coerceAtMost(1.0f)
+}
+
+private fun List<RespiratoryDataPoint>.calculateAmplitudeVariation(): Float {
+        if (this.isEmpty()) return 0f
+
+        val amplitudes = this.map { it.amplitude }
+        val mean = amplitudes.average().toFloat()
+        if (mean == 0f) return 0f
+
+        val variance = amplitudes.map { (it - mean) * (it - mean) }.average().toFloat()
+        val stdDev = kotlin.math.sqrt(variance)
+
+        // Return scaled coefficient of variation (CV = stdDev / mean * 100)
+        return (stdDev / mean * 100f).coerceAtMost(100f)
+}
+
+@Composable
+fun RespiratoryGraph(respiratoryData: List<RespiratoryDataPoint>, modifier: Modifier = Modifier) {
+        if (respiratoryData.isEmpty()) return
+
+        // Draw respiratory graph using Canvas
+        androidx.compose.foundation.Canvas(modifier = modifier.background(Color(0xFF424242))) {
+                val width = size.width
+                val height = size.height
+                val padding = 30f
+
+                // Determine time range from first to last data point
+                val startTime = respiratoryData.first().timestamp
+                val endTime = respiratoryData.last().timestamp
+                val timeRange = (endTime - startTime).coerceAtLeast(1L) // Avoid division by zero
+
+                // Calculate min and max position values for scaling
+                val minY = respiratoryData.minByOrNull { it.position.y }?.position?.y ?: 0f
+                val maxY = respiratoryData.maxByOrNull { it.position.y }?.position?.y ?: 0f
+                val yRange = (maxY - minY).coerceAtLeast(1f) // Avoid division by zero
+
+                // Helper function to convert data points to canvas coordinates
+                fun dataPointToCanvasPoint(
+                        point: RespiratoryDataPoint
+                ): androidx.compose.ui.geometry.Offset {
+                        val x =
+                                padding +
+                                        (point.timestamp - startTime) / timeRange.toFloat() *
+                                                (width - 2 * padding)
+                        val y =
+                                height -
+                                        padding -
+                                        (point.position.y - minY) / yRange * (height - 2 * padding)
+                        return androidx.compose.ui.geometry.Offset(x, y)
+                }
+
+                // Draw axes
+                val axisColor = androidx.compose.ui.graphics.Color.White
+                drawLine(
+                        color = axisColor,
+                        start = androidx.compose.ui.geometry.Offset(padding, padding),
+                        end = androidx.compose.ui.geometry.Offset(padding, height - padding),
+                        strokeWidth = 2f
+                )
+                drawLine(
+                        color = axisColor,
+                        start = androidx.compose.ui.geometry.Offset(padding, height - padding),
+                        end =
+                                androidx.compose.ui.geometry.Offset(
+                                        width - padding,
+                                        height - padding
+                                ),
+                        strokeWidth = 2f
+                )
+
+                // Draw data points for each breathing phase
+                var lastPoint: androidx.compose.ui.geometry.Offset? = null
+                var lastPhase = ""
+
+                respiratoryData.forEach { point ->
+                        val canvasPoint = dataPointToCanvasPoint(point)
+
+                        // Determine color based on breathing phase
+                        val lineColor =
+                                when (point.breathingPhase.lowercase()) {
+                                        "inhaling" ->
+                                                androidx.compose.ui.graphics.Color(
+                                                        0xFF4CAF50
+                                                ) // Green
+                                        "exhaling" ->
+                                                androidx.compose.ui.graphics.Color(
+                                                        0xFF2196F3
+                                                ) // Blue
+                                        "pause" ->
+                                                androidx.compose.ui.graphics.Color(
+                                                        0xFFFFC107
+                                                ) // Yellow/Amber
+                                        else -> androidx.compose.ui.graphics.Color.Gray
+                                }
+
+                        // Draw point
+                        drawCircle(color = lineColor, radius = 2f, center = canvasPoint)
+
+                        // Draw line to previous point if same phase
+                        if (lastPoint != null && point.breathingPhase == lastPhase) {
+                                drawLine(
+                                        color = lineColor,
+                                        start = lastPoint!!,
+                                        end = canvasPoint,
+                                        strokeWidth = 2f
+                                )
+                        }
+
+                        lastPoint = canvasPoint
+                        lastPhase = point.breathingPhase
+                }
+
+                // Draw time markers on x-axis (seconds)
+                val secondsInterval =
+                        kotlin.math.max(
+                                1,
+                                (timeRange / 1000) / 5
+                        ) // Adjust for reasonable number of markers
+                val textPaint =
+                        android.graphics.Paint().apply {
+                                color = android.graphics.Color.WHITE
+                                textSize = 24f
+                                textAlign = android.graphics.Paint.Align.CENTER
+                        }
+
+                for (second in 0..(timeRange / 1000) step secondsInterval) {
+                        val x =
+                                padding +
+                                        second * 1000 / timeRange.toFloat() * (width - 2 * padding)
+                        drawLine(
+                                color = axisColor.copy(alpha = 0.5f),
+                                start = androidx.compose.ui.geometry.Offset(x, height - padding),
+                                end = androidx.compose.ui.geometry.Offset(x, height - padding + 10),
+                                strokeWidth = 1f
+                        )
+
+                        drawContext.canvas.nativeCanvas.drawText(
+                                "${second}s",
+                                x,
+                                height - padding / 3,
+                                textPaint
+                        )
+                }
+
+                // Draw y-axis labels (optional)
+                val yTextPaint =
+                        android.graphics.Paint().apply {
+                                color = android.graphics.Color.WHITE
+                                textSize = 24f
+                                textAlign = android.graphics.Paint.Align.RIGHT
+                        }
+
+                drawContext.canvas.nativeCanvas.drawText(
+                        "Position",
+                        padding - 10f,
+                        padding - 10f,
+                        yTextPaint
+                )
         }
 }

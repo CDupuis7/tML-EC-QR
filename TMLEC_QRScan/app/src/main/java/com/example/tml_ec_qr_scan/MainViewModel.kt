@@ -198,8 +198,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             analysisStarted = false
 
             // Clear existing data for a fresh start
-            _respiratoryData.value = emptyList()
-            breathingDataBuffer.clear()
+                _respiratoryData.value = emptyList()
+                breathingDataBuffer.clear()
 
             // Start the countdown timer with the custom duration
             val duration = _recordingDuration.value
@@ -236,7 +236,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 break
                             }
                         }
-                    }
+            }
         }
     }
 
@@ -366,8 +366,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     .eachCount()
                     Log.d("MainViewModel", "Phase distribution: $phaseCount")
 
-                    Log.d(
-                            "MainViewModel",
+                        Log.d(
+                                "MainViewModel",
                             "Time since recording started: ${System.currentTimeMillis() - recordingStartTime}ms"
                     )
                 }
@@ -597,39 +597,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "Analyzing disease with ${breathingDataBuffer.size} data points"
                 )
 
-                // Calculate breathing rate from QR data
-                val breathingRate = calculateBreathingRate()
+                    // Calculate breathing rate from QR data
+                    val breathingRate = calculateBreathingRate()
 
-                // Calculate irregularity index from QR data
-                val irregularityIndex = calculateIrregularityIndex()
+                    // Calculate irregularity index from QR data
+                    val irregularityIndex = calculateIrregularityIndex()
 
-                // Calculate other metrics from QR data
-                val amplitudeVariation = calculateAmplitudeVariation()
+                    // Calculate other metrics from QR data
+                    val amplitudeVariation = calculateAmplitudeVariation()
                 val durationVariability = calculateBreathingRhythmVariability()
 
                 // Execute classification using PyThon logic directly instead of calling the
                 // classifier
                 // NORMAL if 12 <= breathing_rate <= 20 else ABNORMAL
-                val classification =
+                    val classification =
                         if (breathingRate >= 12f && breathingRate <= 20f) "Normal" else "Abnormal"
 
                 // Detect specific breathing conditions like in the Python script
                 val detectedConditions =
                         classifyBreathingCondition(
-                                breathingRate,
-                                irregularityIndex,
-                                amplitudeVariation,
+                                    breathingRate,
+                                    irregularityIndex,
+                                    amplitudeVariation,
                                 durationVariability
                         )
                 Log.d("Classification", "Detected conditions: $detectedConditions")
 
                 // Create diagnosis result with detailed conditions
-                val result =
-                        DiagnosisResult(
-                                classification = classification,
+                    val result =
+                            DiagnosisResult(
+                                    classification = classification,
                                 confidence = 0.9f,
-                                breathingRate = breathingRate,
-                                irregularityIndex = irregularityIndex,
+                                    breathingRate = breathingRate,
+                                    irregularityIndex = irregularityIndex,
                                 recommendations =
                                         generateDetailedRecommendations(
                                                 classification,
@@ -640,21 +640,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 detectedConditions = detectedConditions,
                                 amplitudeVariability = amplitudeVariation,
                                 durationVariability = durationVariability
-                        )
+                            )
 
-                // Update UI with result
-                _diseaseUiState.value = DiseaseUiState.Result(result)
+                    // Update UI with result
+                    _diseaseUiState.value = DiseaseUiState.Result(result)
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error during disease analysis: ${e.message}")
                 Log.e("MainViewModel", "Stack trace: ${e.stackTraceToString()}")
-                _diseaseUiState.value =
-                        DiseaseUiState.Result(
-                                DiagnosisResult(
-                                        classification = "Error",
-                                        confidence = 0f,
-                                        breathingRate = 0f,
-                                        irregularityIndex = 0f,
-                                        recommendations =
+                    _diseaseUiState.value =
+                            DiseaseUiState.Result(
+                                    DiagnosisResult(
+                                            classification = "Error",
+                                            confidence = 0f,
+                                            breathingRate = 0f,
+                                            irregularityIndex = 0f,
+                                            recommendations =
                                                 listOf("Error during analysis: ${e.message}"),
                                         detectedConditions = emptyList(),
                                         amplitudeVariability = 0f,
@@ -911,8 +911,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // If the rate seems implausible, use a default value
         val finalRate =
                 if (breathingRate < 5f || breathingRate > 40f) {
-                    Log.d(
-                            "BreathingRate",
+        Log.d(
+                "BreathingRate",
                             "Calculated rate ($breathingRate) outside physiological range, using default"
                     )
                     16f // Default to middle of normal range
