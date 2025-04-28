@@ -895,7 +895,9 @@ fun ResultsScreen(
                                 )
 
                                 // Display detected conditions if any
-                                if (detectedConditions.isNotEmpty()) {
+                                if (detectedConditions.isNotEmpty() &&
+                                                breathingClassification.lowercase() == "abnormal"
+                                ) {
                                         Spacer(modifier = Modifier.height(8.dp))
 
                                         Card(
