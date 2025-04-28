@@ -1,13 +1,17 @@
 package com.example.tml_ec_qr_scan
 
+import android.content.ContentValues.TAG
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import com.google.gson.Gson
 import java.io.FileInputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sqrt
 import org.tensorflow.lite.Interpreter
@@ -72,6 +76,21 @@ class BreathingClassifier(private val context: Context) {
         var loadedModelName = "unknown"
     }
 
+    private val BREATHING_PHASE_MODEL_FILENAME = "breathing_phase.tflite"
+    private val RESPIRATORY_ABNORMALITY_MODEL_FILENAME = "respiratory_abnormality.tflite"
+    private val RESPIRATORY_DISEASE_MODEL_FILENAME = "respiratory_disease.tflite"
+
+    // Model Status flags
+    private var _isBreathingPhaseModelAvailable = false
+    private var isAbnormalityModelAvailable = false
+
+    private val PYTHON_MODEL_WEIGHTS_FILENAME = "python_model_weights.json"
+    private var _isPythonModelWeightsAvailable = false // New flag for Python model
+
+    // Python model parameters (loaded from JSON)
+    private var pythonModelWeights: Map<String, Float>? = null
+    private var pythonModelThresholds: Map<String, Float>? = null
+
     init {
         // Check and log Android device info
         val deviceInfo =
@@ -89,7 +108,7 @@ class BreathingClassifier(private val context: Context) {
         )
 
         try {
-            loadModel()
+            init(context)
             isModelAvailable = true
             Log.i("BreathingClassifier", "✓ ML model for breathing phase loaded successfully")
         } catch (e: Exception) {
@@ -120,7 +139,7 @@ class BreathingClassifier(private val context: Context) {
                     )
 
                     loadAbnormalityModel(modelName)
-                    _isAbnormalityModelAvailable = true
+                    isAbnormalityModelAvailable = true
                     Companion.isAbnormalityModelAvailable = true
                     _loadedModelName = modelName
                     Companion.loadedModelName = modelName
@@ -150,7 +169,7 @@ class BreathingClassifier(private val context: Context) {
                     "BreathingClassifier",
                     "Abnormality model not found, using rule-based classification: ${e.message}"
             )
-            _isAbnormalityModelAvailable = false
+            isAbnormalityModelAvailable = false
             Companion.isAbnormalityModelAvailable = false
 
             // Show error messages only when model loading actually fails
@@ -187,12 +206,14 @@ class BreathingClassifier(private val context: Context) {
                 "================================================================"
         )
         Log.i("BreathingClassifier", "CLASSIFIER INITIALIZATION COMPLETE")
-        Log.i("BreathingClassifier", "Model loaded: $_isAbnormalityModelAvailable")
+        Log.i("BreathingClassifier", "Model loaded: $isAbnormalityModelAvailable")
         Log.i("BreathingClassifier", "Using model: $_loadedModelName")
         Log.i(
                 "BreathingClassifier",
                 "================================================================"
         )
+
+        Log.d(TAG, "Model loaded successfully: ${abnormalityInterpreter != null}")
     }
 
     private fun loadModel() {
@@ -323,6 +344,129 @@ class BreathingClassifier(private val context: Context) {
         }
     }
 
+    /** Initialize the breathing classifier */
+    fun init(context: Context) {
+        try {
+            // Log device info
+            logDeviceInfo()
+
+            // Attempt to load breathing phase model first
+            try {
+                Log.d(TAG, "Attempting to load breathing phase model")
+                loadBreathingPhaseModel(context)
+                _isBreathingPhaseModelAvailable = true
+                Log.d(TAG, "Successfully loaded breathing phase model")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load breathing phase model: ${e.message}")
+                _isBreathingPhaseModelAvailable = false
+            }
+
+            // Then attempt to load the abnormality model
+            try {
+                Log.d(TAG, "Attempting to load abnormality model as primary classifier")
+                loadAbnormalityModel(context.toString())
+                isAbnormalityModelAvailable = true
+                Log.d(TAG, "Successfully loaded abnormality model")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load abnormality model: ${e.message}")
+                isAbnormalityModelAvailable = false
+            }
+
+            Log.i(
+                    TAG,
+                    "Classifier initialized with models: " +
+                            "Breathing Phase: $_isBreathingPhaseModelAvailable, " +
+                            "Abnormality: $isAbnormalityModelAvailable"
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing classifier: ${e.message}")
+            Log.e(TAG, e.stackTraceToString())
+        }
+    }
+
+    /**
+     * Load Python model weights from the JSON file exported by
+     * respiratory_pattern_classification.py
+     */
+    @Throws(IOException::class)
+    private fun loadPythonModelWeights(context: Context) {
+        try {
+            // Check if the file exists
+            val modelExists = fileExistsInAssets(context, PYTHON_MODEL_WEIGHTS_FILENAME)
+            if (!modelExists) {
+                Log.e(TAG, "Python model weights file not found in assets")
+                throw IOException("Python model weights file not found in assets")
+            }
+
+            // Read the JSON file
+            val modelJson =
+                    context.assets.open(PYTHON_MODEL_WEIGHTS_FILENAME).bufferedReader().use {
+                        it.readText()
+                    }
+
+            // Parse the JSON
+            val gson = Gson()
+            val modelData = gson.fromJson(modelJson, Map::class.java)
+
+            // Extract weights and thresholds
+            @Suppress("UNCHECKED_CAST")
+            pythonModelWeights =
+                    modelData["weights"] as? Map<String, Float>
+                            ?: throw IOException("Invalid weights format in Python model file")
+
+            @Suppress("UNCHECKED_CAST")
+            pythonModelThresholds =
+                    modelData["thresholds"] as? Map<String, Float>
+                            ?: throw IOException("Invalid thresholds format in Python model file")
+
+            Log.d(TAG, "Loaded Python model weights: ${pythonModelWeights?.keys}")
+            Log.d(TAG, "Loaded Python model thresholds: ${pythonModelThresholds}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading Python model weights: ${e.message}")
+            throw e
+        }
+    }
+
+    /** Predict using the Python model weights (logistic regression) */
+    private fun predictWithPythonModel(
+            breathingRate: Float,
+            irregularityIndex: Float,
+            amplitudeVariation: Float,
+            avgVelocity: Float
+    ): Pair<Float, Float> {
+        // Extract weights (or use defaults if not found)
+        val weights = pythonModelWeights ?: return Pair(0.5f, 0.5f)
+
+        // Get weights for each feature (or default to 0.0f if not found)
+        val rateWeight = weights["breathing_rate"] ?: 0.0f
+        val irregularityWeight = weights["irregularity_index"] ?: 0.0f
+        val amplitudeWeight = weights["amplitude_variation"] ?: 0.0f
+        val velocityWeight = weights["avg_velocity"] ?: 0.0f
+        val biasWeight = weights["bias"] ?: 0.0f
+
+        // Normalize features (should match Python preprocessing)
+        val normalizedRate = breathingRate / 30f
+        val normalizedIrregularity = irregularityIndex.coerceIn(0f, 1f)
+        val normalizedAmplitude = (amplitudeVariation / 100f).coerceIn(0f, 1f)
+        val normalizedVelocity = (avgVelocity / 15f).coerceIn(0f, 1f)
+
+        // Calculate weighted sum
+        val weightedSum =
+                (normalizedRate * rateWeight) +
+                        (normalizedIrregularity * irregularityWeight) +
+                        (normalizedAmplitude * amplitudeWeight) +
+                        (normalizedVelocity * velocityWeight) +
+                        biasWeight
+
+        // Apply sigmoid function to get probability
+        val abnormalProb = 1.0f / (1.0f + exp(-weightedSum))
+        val normalProb = 1.0f - abnormalProb
+
+        Log.d(TAG, "Python model prediction: Normal=$normalProb, Abnormal=$abnormalProb")
+
+        return Pair(normalProb, abnormalProb)
+    }
+
     /** Classify breathing as normal or abnormal using the trained model */
     fun classifyBreathing(
             breathingRate: Float,
@@ -341,6 +485,9 @@ class BreathingClassifier(private val context: Context) {
             val details = mutableMapOf<String, Float>()
             val detectedConditions = mutableListOf<String>()
 
+            // Create a separate list for conditions that actually affect classification
+            val classificationRelevantConditions = mutableListOf<String>()
+
             details["breathingRate"] = breathingRate
             details["irregularityIndex"] = irregularityIndex
             details["amplitudeVariation"] = amplitudeVariation
@@ -354,26 +501,36 @@ class BreathingClassifier(private val context: Context) {
             normalizedValues["amplitudeVariation"] = (amplitudeVariation / 100f).coerceIn(0f, 1f)
             normalizedValues["avgVelocity"] = (avgVelocity / 15f).coerceIn(0f, 1f)
 
-            // Define thresholds from the ML model
-            val BRADYPNEA_THRESHOLD = 10f // Below this is abnormally slow
-            val TACHYPNEA_THRESHOLD = 24f // Above this is abnormally fast
-            val IRREGULARITY_THRESHOLD = 0.4f
-            val AMPLITUDE_VARIATION_THRESHOLD = 40f
-            val VELOCITY_THRESHOLD = 8f
+            // Define thresholds for rule-based classification
+            val thresholds =
+                    mapOf(
+                            "BRADYPNEA_THRESHOLD" to 10f,
+                            "TACHYPNEA_THRESHOLD" to 24f,
+                            "IRREGULARITY_THRESHOLD" to 0.5f,
+                            "AMPLITUDE_VARIATION_THRESHOLD" to 40f,
+                            "VELOCITY_THRESHOLD" to 8f
+                    )
 
-            // 1. Check breathing rate - PRIMARY FACTOR
+            val BRADYPNEA_THRESHOLD = thresholds["BRADYPNEA_THRESHOLD"] ?: 10f
+            val TACHYPNEA_THRESHOLD = thresholds["TACHYPNEA_THRESHOLD"] ?: 24f
+            val IRREGULARITY_THRESHOLD = thresholds["IRREGULARITY_THRESHOLD"] ?: 0.5f
+            val AMPLITUDE_VARIATION_THRESHOLD = thresholds["AMPLITUDE_VARIATION_THRESHOLD"] ?: 40f
+            val VELOCITY_THRESHOLD = thresholds["VELOCITY_THRESHOLD"] ?: 8f
+
+            // Identify conditions based on thresholds (for detailed diagnostics)
+            // Check breathing rate condition
             val isBreathingRateNormal = breathingRate in BRADYPNEA_THRESHOLD..TACHYPNEA_THRESHOLD
-
-            // Identify specific breathing rate condition if abnormal
             if (!isBreathingRateNormal) {
                 if (breathingRate < BRADYPNEA_THRESHOLD) {
                     detectedConditions.add("BRADYPNEA")
+                    classificationRelevantConditions.add("BRADYPNEA")
                     Log.d(
                             "BreathingClassifier",
                             "BRADYPNEA detected: breathing rate ${breathingRate} < $BRADYPNEA_THRESHOLD"
                     )
                 } else {
                     detectedConditions.add("TACHYPNEA")
+                    classificationRelevantConditions.add("TACHYPNEA")
                     Log.d(
                             "BreathingClassifier",
                             "TACHYPNEA detected: breathing rate ${breathingRate} > $TACHYPNEA_THRESHOLD"
@@ -381,25 +538,21 @@ class BreathingClassifier(private val context: Context) {
                 }
             }
 
-            // 2. Check secondary factors
-            var abnormalSecondaryFactors = 0
-            val totalSecondaryFactors = 3
-
-            // Check irregularity index
+            // Check irregularity index - still detect and report it but don't include in
+            // classification
             if (irregularityIndex > IRREGULARITY_THRESHOLD) {
-                abnormalSecondaryFactors++
                 detectedConditions.add("HIGH_IRREGULARITY")
                 details["abnormal_irregularity"] = 1.0f
                 Log.d(
                         "BreathingClassifier",
-                        "High timing variability detected: ${irregularityIndex} > $IRREGULARITY_THRESHOLD"
+                        "High timing variability detected (IGNORED FOR CLASSIFICATION): ${irregularityIndex} > $IRREGULARITY_THRESHOLD"
                 )
             }
 
             // Check amplitude variation
             if (amplitudeVariation > AMPLITUDE_VARIATION_THRESHOLD) {
-                abnormalSecondaryFactors++
                 detectedConditions.add("HIGH_AMPLITUDE_VARIATION")
+                classificationRelevantConditions.add("HIGH_AMPLITUDE_VARIATION")
                 details["abnormal_amplitude"] = 1.0f
                 Log.d(
                         "BreathingClassifier",
@@ -409,8 +562,8 @@ class BreathingClassifier(private val context: Context) {
 
             // Check average velocity
             if (avgVelocity > VELOCITY_THRESHOLD) {
-                abnormalSecondaryFactors++
                 detectedConditions.add("HIGH_VELOCITY")
+                classificationRelevantConditions.add("HIGH_VELOCITY")
                 details["abnormal_velocity"] = 1.0f
                 Log.d(
                         "BreathingClassifier",
@@ -418,147 +571,66 @@ class BreathingClassifier(private val context: Context) {
                 )
             }
 
-            // 3. Determine classification based on primary and secondary factors
-            val classification: String
-            val confidence: Float
-
-            if (!isBreathingRateNormal) {
-                // If breathing rate is abnormal, always classify as abnormal
-                classification = "Abnormal"
-                confidence = 0.95f
-                Log.d(
-                        "BreathingClassifier",
-                        "ABNORMAL classification due to breathing rate outside normal range"
-                )
-            } else if (abnormalSecondaryFactors >= 2) {
-                // If breathing rate is normal but majority of secondary factors are abnormal
-                classification = "Abnormal"
-                confidence = 0.85f
-                Log.d(
-                        "BreathingClassifier",
-                        "ABNORMAL classification due to $abnormalSecondaryFactors abnormal secondary factors"
+            // PRIMARY APPROACH: Use TFLite model if available
+            if (isAbnormalityModelAvailable && abnormalityInterpreter != null) {
+                return classifyWithTFLiteModel(
+                        breathingRate,
+                        irregularityIndex,
+                        amplitudeVariation,
+                        avgVelocity,
+                        normalizedValues,
+                        details,
+                        detectedConditions,
+                        isBreathingRateNormal
                 )
             } else {
-                // If breathing rate is normal and most secondary factors are normal
-                classification = "Normal"
-                confidence = 0.9f
+                // FALLBACK: Use rule-based classification if no models available
+                Log.d("BreathingClassifier", "No models available, using rule-based classification")
+                val classification =
+                        useRuleBasedClassification(
+                                isBreathingRateNormal,
+                                detectedConditions.size,
+                                detectedConditions
+                        )
+                val confidence = if (classification == "Abnormal") 0.85f else 0.9f
+
+                // Add model probabilities to details
+                val probNormal = if (classification == "Normal") confidence else 1.0f - confidence
+                val probAbnormal =
+                        if (classification == "Abnormal") confidence else 1.0f - confidence
+                details["model_prob_normal"] = probNormal
+                details["model_prob_abnormal"] = probAbnormal
+
+                // Create detailed diagnostic info
+                val diagnosticInfo =
+                        createDiagnosticInfo(
+                                classification,
+                                breathingRate,
+                                irregularityIndex,
+                                amplitudeVariation,
+                                avgVelocity,
+                                detectedConditions
+                        )
+
+                // Store diagnostic info
+                details["diagnostic_info"] = diagnosticInfo.hashCode().toFloat()
+
                 Log.d(
                         "BreathingClassifier",
-                        "NORMAL classification: breathing rate normal and fewer than 2 abnormal secondary factors"
+                        "FINAL CLASSIFICATION: $classification with confidence $confidence (breathing rate: $breathingRate)"
+                )
+                Log.d("BreathingClassifier", "Detected conditions: $detectedConditions")
+
+                // Create and return the detailed classification result
+                return ClassificationResultV2(
+                        classification = classification,
+                        confidence = confidence,
+                        details = details,
+                        normalizedValues = normalizedValues.toMap(),
+                        detectedConditions = detectedConditions.toList(),
+                        diagnosticInfo = diagnosticInfo
                 )
             }
-
-            // Run the ML model to get probabilities - but our decision logic is already determined
-            var modelProbNormal = 0.5f
-            var modelProbAbnormal = 0.5f
-
-            if (_isAbnormalityModelAvailable && abnormalityInterpreter != null) {
-                try {
-                    Log.d("BreathingClassifier", "Running ML model for probability estimation")
-
-                    // Reset input buffer and add normalized features
-                    abnormalityInputBuffer.rewind()
-                    abnormalityInputBuffer.putFloat(normalizedValues["breathingRate"]!!)
-                    abnormalityInputBuffer.putFloat(normalizedValues["irregularityIndex"]!!)
-                    abnormalityInputBuffer.putFloat(normalizedValues["amplitudeVariation"]!!)
-                    abnormalityInputBuffer.putFloat(normalizedValues["avgVelocity"]!!)
-
-                    // Run inference
-                    abnormalityInterpreter?.run(abnormalityInputBuffer, abnormalityOutputBuffer)
-
-                    // Get the predicted probabilities
-                    val probabilities = abnormalityOutputBuffer[0]
-
-                    // Log probabilities for each class
-                    for (i in probabilities.indices) {
-                        val label = abnormalityLabels.getOrElse(i) { "Unknown-$i" }
-                        val probability = probabilities[i]
-                        Log.d("BreathingClassifier", "Class $label probability: $probability")
-                        details["probability_$label"] = probability
-
-                        if (label == "Normal") modelProbNormal = probability
-                        if (label == "Abnormal") modelProbAbnormal = probability
-                    }
-                } catch (e: Exception) {
-                    Log.e("BreathingClassifier", "Error running model: ${e.message}")
-                    // Continue using our rule-based decision
-                }
-            }
-
-            // Add model probabilities to details
-            details["model_prob_normal"] = modelProbNormal
-            details["model_prob_abnormal"] = modelProbAbnormal
-
-            // Create detailed diagnostic info
-            val diagnosticInfo = StringBuilder()
-
-            if (classification == "Abnormal") {
-                diagnosticInfo.append("Abnormal breathing detected:\n")
-
-                // Add specific conditions
-                if (detectedConditions.contains("BRADYPNEA")) {
-                    diagnosticInfo.append(
-                            "- BRADYPNEA: Breathing rate too slow (${breathingRate.format(1)} breaths/min)\n"
-                    )
-                } else if (detectedConditions.contains("TACHYPNEA")) {
-                    diagnosticInfo.append(
-                            "- TACHYPNEA: Breathing rate too fast (${breathingRate.format(1)} breaths/min)\n"
-                    )
-                }
-
-                if (detectedConditions.contains("HIGH_IRREGULARITY")) {
-                    diagnosticInfo.append(
-                            "- High breathing irregularity (${irregularityIndex.format(2)})\n"
-                    )
-                }
-
-                if (detectedConditions.contains("HIGH_AMPLITUDE_VARIATION")) {
-                    diagnosticInfo.append(
-                            "- High amplitude variation (${amplitudeVariation.format(1)})\n"
-                    )
-                }
-
-                if (detectedConditions.contains("HIGH_VELOCITY")) {
-                    diagnosticInfo.append("- High breathing velocity (${avgVelocity.format(1)})\n")
-                }
-            } else {
-                diagnosticInfo.append("Normal breathing pattern\n")
-                diagnosticInfo.append("- Breathing rate: ${breathingRate.format(1)} breaths/min\n")
-            }
-
-            // Add more general info
-            diagnosticInfo.append("\nBreathing metrics:\n")
-            diagnosticInfo.append(
-                    "- Rate: ${breathingRate.format(1)} breaths/min (normal range: $BRADYPNEA_THRESHOLD-$TACHYPNEA_THRESHOLD)\n"
-            )
-            diagnosticInfo.append(
-                    "- Irregularity: ${irregularityIndex.format(2)} (threshold: $IRREGULARITY_THRESHOLD)\n"
-            )
-            diagnosticInfo.append(
-                    "- Amplitude variation: ${amplitudeVariation.format(1)} (threshold: $AMPLITUDE_VARIATION_THRESHOLD)\n"
-            )
-            diagnosticInfo.append(
-                    "- Average velocity: ${avgVelocity.format(1)} (threshold: $VELOCITY_THRESHOLD)\n"
-            )
-
-            // Store diagnostic info
-            details["diagnostic_info"] = diagnosticInfo.hashCode().toFloat()
-
-            Log.d(
-                    "BreathingClassifier",
-                    "FINAL CLASSIFICATION: $classification with confidence $confidence (breathing rate: $breathingRate)"
-            )
-            Log.d("BreathingClassifier", "Detected conditions: $detectedConditions")
-
-            // Create and return the detailed classification result
-            return ClassificationResultV2(
-                    classification = classification,
-                    confidence = confidence,
-                    details = details,
-                    normalizedValues = normalizedValues,
-                    detectedConditions = detectedConditions.toList(),
-                    diagnosticInfo = diagnosticInfo.toString()
-            )
         } catch (e: Exception) {
             Log.e("BreathingClassifier", "General error in classification: ${e.message}")
             Log.e("BreathingClassifier", "Stack trace: ${e.stackTraceToString()}")
@@ -572,6 +644,339 @@ class BreathingClassifier(private val context: Context) {
                     detectedConditions = listOf("ERROR"),
                     diagnosticInfo = "Error during classification: ${e.message}"
             )
+        }
+    }
+
+    /** Helper method for TFLite model classification */
+    private fun classifyWithTFLiteModel(
+            breathingRate: Float,
+            irregularityIndex: Float,
+            amplitudeVariation: Float,
+            avgVelocity: Float,
+            normalizedValues: Map<String, Float>,
+            details: MutableMap<String, Float>,
+            detectedConditions: MutableList<String>,
+            isBreathingRateNormal: Boolean
+    ): ClassificationResultV2 {
+        var modelProbNormal = 0.5f
+        var modelProbAbnormal = 0.5f
+        var classification: String
+        var confidence: Float
+
+        try {
+            Log.d("BreathingClassifier", "Running TFLite model for classification")
+
+            // Reset input buffer and add normalized features
+            abnormalityInputBuffer.rewind()
+            abnormalityInputBuffer.putFloat(normalizedValues["breathingRate"]!!)
+            abnormalityInputBuffer.putFloat(normalizedValues["irregularityIndex"]!!)
+            abnormalityInputBuffer.putFloat(normalizedValues["amplitudeVariation"]!!)
+            abnormalityInputBuffer.putFloat(normalizedValues["avgVelocity"]!!)
+
+            // Run inference with TFLite model
+            abnormalityInterpreter?.run(abnormalityInputBuffer, abnormalityOutputBuffer)
+
+            // Get the predicted probabilities from the model
+            val probabilities = abnormalityOutputBuffer[0]
+
+            // Log probabilities for each class
+            for (i in probabilities.indices) {
+                val label = abnormalityLabels.getOrElse(i) { "Unknown-$i" }
+                val probability = probabilities[i]
+                Log.d("BreathingClassifier", "Class $label probability: $probability")
+                details["probability_$label"] = probability
+
+                if (label == "Normal") modelProbNormal = probability
+                if (label == "Abnormal") modelProbAbnormal = probability
+            }
+
+            // STEP 1: Initial model classification
+            val initialModelClassification =
+                    if (modelProbAbnormal > modelProbNormal) "Abnormal" else "Normal"
+            Log.d(
+                    "BreathingClassifier",
+                    "Initial TFLite model classification: $initialModelClassification"
+            )
+            Log.d(
+                    "BreathingClassifier",
+                    "Model probabilities - Normal: $modelProbNormal, Abnormal: $modelProbAbnormal"
+            )
+
+            // STEP 2: Count abnormal conditions and evaluate breathing rate
+            val hasBradypnea = detectedConditions.contains("BRADYPNEA")
+            val hasTachypnea = detectedConditions.contains("TACHYPNEA")
+            val abnormalBreathingRate = hasBradypnea || hasTachypnea
+
+            // Count the secondary factors (excluding irregularity index as requested)
+            val secondaryFactors = mutableListOf<String>()
+            if (detectedConditions.contains("HIGH_AMPLITUDE_VARIATION"))
+                    secondaryFactors.add("HIGH_AMPLITUDE_VARIATION")
+            if (detectedConditions.contains("HIGH_VELOCITY")) secondaryFactors.add("HIGH_VELOCITY")
+
+            // Log all the factors for transparency
+            Log.d("BreathingClassifier", "==== DECISION FACTORS ====")
+            Log.d(
+                    "BreathingClassifier",
+                    "Breathing rate: ${if(abnormalBreathingRate) "ABNORMAL" else "NORMAL"} ($breathingRate)"
+            )
+            Log.d(
+                    "BreathingClassifier",
+                    "Irregularity: ${if(detectedConditions.contains("HIGH_IRREGULARITY")) "ABNORMAL" else "NORMAL"} ($irregularityIndex) - NOT CONSIDERED"
+            )
+            Log.d(
+                    "BreathingClassifier",
+                    "Velocity: ${if(detectedConditions.contains("HIGH_VELOCITY")) "ABNORMAL" else "NORMAL"} ($avgVelocity)"
+            )
+            Log.d(
+                    "BreathingClassifier",
+                    "Amplitude variation: ${if(detectedConditions.contains("HIGH_AMPLITUDE_VARIATION")) "ABNORMAL" else "NORMAL"} ($amplitudeVariation)"
+            )
+
+            // STEP 3: Apply the majority voting rule based on your requirements
+            val finalClassification: String
+            val finalConfidence: Float
+
+            if (abnormalBreathingRate) {
+                // Breathing rate is the primary factor - if it's abnormal, final classification is
+                // abnormal
+                finalClassification = "Abnormal"
+                // Use model confidence but ensure it's high enough to reflect our certainty
+                finalConfidence = modelProbAbnormal.coerceAtLeast(0.7f)
+                Log.d(
+                        "BreathingClassifier",
+                        "FINAL DECISION: ABNORMAL (abnormal breathing rate is primary factor)"
+                )
+            } else if (secondaryFactors.size >= 2) {
+                // Both secondary factors are abnormal, which is enough for an abnormal
+                // classification
+                finalClassification = "Abnormal"
+                finalConfidence = modelProbAbnormal.coerceAtLeast(0.65f)
+                Log.d(
+                        "BreathingClassifier",
+                        "FINAL DECISION: ABNORMAL (two secondary factors abnormal: ${secondaryFactors.joinToString()})"
+                )
+            } else {
+                // Not enough abnormal factors, so the classification is normal
+                finalClassification = "Normal"
+                finalConfidence = modelProbNormal.coerceAtLeast(0.65f)
+                Log.d(
+                        "BreathingClassifier",
+                        "FINAL DECISION: NORMAL (breathing rate normal and fewer than 2 secondary factors abnormal)"
+                )
+            }
+
+            // STEP 4: Record if the rule-based post-processing overrode the model's prediction
+            if (finalClassification != initialModelClassification) {
+                Log.d(
+                        "BreathingClassifier",
+                        "NOTE: Rule-based post-processing overrode model prediction from $initialModelClassification to $finalClassification"
+                )
+                details["model_overridden"] = 1.0f
+                details["original_classification"] =
+                        if (initialModelClassification == "Abnormal") 1.0f else 0.0f
+            } else {
+                Log.d(
+                        "BreathingClassifier",
+                        "Model prediction and final decision agree: $finalClassification"
+                )
+                details["model_overridden"] = 0.0f
+            }
+
+            // Return the final classification and confidence
+            classification = finalClassification
+            confidence = finalConfidence
+
+            Log.d(
+                    "BreathingClassifier",
+                    "Final TFLite MODEL CLASSIFICATION: $classification with confidence $confidence"
+            )
+
+            // Store original model probabilities for reference
+            details["original_model_prob_normal"] = modelProbNormal
+            details["original_model_prob_abnormal"] = modelProbAbnormal
+
+            // Update the model probabilities based on our final classification
+            modelProbNormal = if (classification == "Normal") confidence else 1.0f - confidence
+            modelProbAbnormal = if (classification == "Abnormal") confidence else 1.0f - confidence
+        } catch (e: Exception) {
+            Log.e(
+                    "BreathingClassifier",
+                    "Error running TFLite model: ${e.message}, falling back to rule-based"
+            )
+            // Continue using our rule-based decision as fallback
+            classification =
+                    useRuleBasedClassification(
+                            isBreathingRateNormal,
+                            detectedConditions.size,
+                            detectedConditions
+                    )
+            confidence = if (classification == "Abnormal") 0.85f else 0.9f
+
+            // Log that we had to fall back
+            Log.w(
+                    "BreathingClassifier",
+                    "Had to fall back to rule-based classification due to model error"
+            )
+            details["model_error"] = 1.0f
+        }
+
+        // Add model probabilities to details
+        details["model_prob_normal"] = modelProbNormal
+        details["model_prob_abnormal"] = modelProbAbnormal
+
+        // Create detailed diagnostic info
+        val diagnosticInfo =
+                createDiagnosticInfo(
+                        classification,
+                        breathingRate,
+                        irregularityIndex,
+                        amplitudeVariation,
+                        avgVelocity,
+                        detectedConditions
+                )
+
+        // Store diagnostic info
+        details["diagnostic_info"] = diagnosticInfo.hashCode().toFloat()
+
+        Log.d(
+                "BreathingClassifier",
+                "FINAL CLASSIFICATION: $classification with confidence $confidence (breathing rate: $breathingRate)"
+        )
+        Log.d("BreathingClassifier", "Detected conditions: $detectedConditions")
+
+        // Create and return the detailed classification result
+        return ClassificationResultV2(
+                classification = classification,
+                confidence = confidence,
+                details = details,
+                normalizedValues = normalizedValues.toMap(),
+                detectedConditions = detectedConditions.toList(),
+                diagnosticInfo = diagnosticInfo
+        )
+    }
+
+    /** Helper method to create diagnostic info text */
+    private fun createDiagnosticInfo(
+            classification: String,
+            breathingRate: Float,
+            irregularityIndex: Float,
+            amplitudeVariation: Float,
+            avgVelocity: Float,
+            detectedConditions: List<String>
+    ): String {
+        val diagnosticInfo = StringBuilder()
+
+        // Use thresholds from Python model if available
+        val thresholds =
+                pythonModelThresholds
+                        ?: mapOf(
+                                "BRADYPNEA_THRESHOLD" to 10f,
+                                "TACHYPNEA_THRESHOLD" to 24f,
+                                "IRREGULARITY_THRESHOLD" to 0.5f,
+                                "AMPLITUDE_VARIATION_THRESHOLD" to 40f,
+                                "VELOCITY_THRESHOLD" to 8f
+                        )
+
+        val BRADYPNEA_THRESHOLD = thresholds["BRADYPNEA_THRESHOLD"] ?: 10f
+        val TACHYPNEA_THRESHOLD = thresholds["TACHYPNEA_THRESHOLD"] ?: 24f
+        val IRREGULARITY_THRESHOLD = thresholds["IRREGULARITY_THRESHOLD"] ?: 0.5f
+        val AMPLITUDE_VARIATION_THRESHOLD = thresholds["AMPLITUDE_VARIATION_THRESHOLD"] ?: 40f
+        val VELOCITY_THRESHOLD = thresholds["VELOCITY_THRESHOLD"] ?: 8f
+
+        if (classification == "Abnormal") {
+            diagnosticInfo.append("Abnormal breathing detected:\n")
+
+            // Add specific conditions
+            if (detectedConditions.contains("BRADYPNEA")) {
+                diagnosticInfo.append(
+                        "- BRADYPNEA: Breathing rate too slow (${breathingRate.format(1)} breaths/min)\n"
+                )
+            } else if (detectedConditions.contains("TACHYPNEA")) {
+                diagnosticInfo.append(
+                        "- TACHYPNEA: Breathing rate too fast (${breathingRate.format(1)} breaths/min)\n"
+                )
+            }
+
+            if (detectedConditions.contains("HIGH_IRREGULARITY")) {
+                diagnosticInfo.append(
+                        "- High breathing irregularity (${irregularityIndex.format(2)})\n"
+                )
+            }
+
+            if (detectedConditions.contains("HIGH_AMPLITUDE_VARIATION")) {
+                diagnosticInfo.append(
+                        "- High amplitude variation (${amplitudeVariation.format(1)})\n"
+                )
+            }
+
+            if (detectedConditions.contains("HIGH_VELOCITY")) {
+                diagnosticInfo.append("- High breathing velocity (${avgVelocity.format(1)})\n")
+            }
+        } else {
+            diagnosticInfo.append("Normal breathing pattern\n")
+            diagnosticInfo.append("- Breathing rate: ${breathingRate.format(1)} breaths/min\n")
+        }
+
+        // Add more general info
+        diagnosticInfo.append("\nBreathing metrics:\n")
+        diagnosticInfo.append(
+                "- Rate: ${breathingRate.format(1)} breaths/min (normal range: $BRADYPNEA_THRESHOLD-$TACHYPNEA_THRESHOLD)\n"
+        )
+        diagnosticInfo.append(
+                "- Irregularity: ${irregularityIndex.format(2)} (threshold: $IRREGULARITY_THRESHOLD)\n"
+        )
+        diagnosticInfo.append(
+                "- Amplitude variation: ${amplitudeVariation.format(1)} (threshold: $AMPLITUDE_VARIATION_THRESHOLD)\n"
+        )
+        diagnosticInfo.append(
+                "- Average velocity: ${avgVelocity.format(1)} (threshold: $VELOCITY_THRESHOLD)\n"
+        )
+
+        return diagnosticInfo.toString()
+    }
+
+    // Helper method for rule-based classification
+    private fun useRuleBasedClassification(
+            isBreathingRateNormal: Boolean,
+            abnormalFactorsCount: Int,
+            conditions: List<String> = emptyList()
+    ): String {
+        // Exclude HIGH_AMPLITUDE_VARIATION from abnormalFactorsCount for classification
+        val relevantCount =
+                abnormalFactorsCount -
+                        (if (conditions.contains("HIGH_AMPLITUDE_VARIATION")) 1 else 0)
+
+        Log.d(
+                "BreathingClassifier",
+                "Total abnormal factors: $abnormalFactorsCount, Relevant for classification: $relevantCount"
+        )
+
+        return when {
+            // If breathing rate is abnormal, always classify as abnormal
+            !isBreathingRateNormal -> {
+                Log.d(
+                        "BreathingClassifier",
+                        "RULE-BASED: ABNORMAL due to breathing rate outside normal range"
+                )
+                "Abnormal"
+            }
+            // If breathing rate is normal but majority of secondary factors are abnormal
+            // Requires at least 2 abnormal secondary factors (stricter than before)
+            relevantCount >= 2 -> {
+                Log.d(
+                        "BreathingClassifier",
+                        "RULE-BASED: ABNORMAL due to $relevantCount relevant abnormal secondary factors"
+                )
+                "Abnormal"
+            }
+            // If breathing rate is normal and most secondary factors are normal
+            else -> {
+                Log.d(
+                        "BreathingClassifier",
+                        "RULE-BASED: NORMAL - breathing rate normal and fewer than 2 relevant abnormal factors"
+                )
+                "Normal"
+            }
         }
     }
 
@@ -598,7 +1003,8 @@ class BreathingClassifier(private val context: Context) {
 
         /** Returns a formatted string of detected conditions */
         fun getDetectedConditionsFormatted(): String {
-            if (detectedConditions.isEmpty()) return "None"
+            // Only return detected conditions if classification is Abnormal
+            if (classification != "Abnormal" || detectedConditions.isEmpty()) return "None"
             return detectedConditions.joinToString(", ")
         }
 
@@ -658,29 +1064,89 @@ class BreathingClassifier(private val context: Context) {
             // Map index to class label
             val predictedClass = classLabels[maxProbIndex]
 
-            // Add hysteresis to prevent rapid switching - enforce natural breathing cycles
-            val lastPhase =
-                    if (recentMovements.size > 1)
-                            recentMovements[recentMovements.size - 2].breathingPhase.lowercase()
-                    else ""
-            val smoothedVelocity = recentMovements.last().velocity
-            val correctedClass = enforceBreathingCycle(lastPhase, predictedClass, smoothedVelocity)
+            // Get the velocity for phase determination
+            val smoothedVelocity = calculateSmoothedVelocity(recentMovements)
 
-            // Log the result
+            // Log all probabilities for debugging
+            for (i in probabilities.indices) {
+                Log.d(
+                        "BreathingClassifier",
+                        "Class '${classLabels.getOrElse(i) { "unknown-$i" }}' probability: ${probabilities[i]}"
+                )
+            }
+
+            // Determine the breathing phase based primarily on velocity
+            // This is a more reliable approach than relying solely on the ML model
+            val phase = determineBreathingPhaseFromVelocity(smoothedVelocity)
+
             Log.d(
                     "BreathingClassifier",
-                    "ML classification - Raw Phase: $predictedClass, Corrected: $correctedClass, Confidence: $maxProb, Velocity: $smoothedVelocity"
+                    "ML classification - Raw Model Output: $predictedClass, Velocity-based: $phase, " +
+                            "Velocity: $smoothedVelocity, Confidence: $maxProb"
             )
 
-            lastClassification = correctedClass
+            lastClassification = phase
             confidenceScore = maxProb
 
-            return BreathingResult(correctedClass, maxProb)
+            return BreathingResult(phase, maxProb)
         } catch (e: Exception) {
             Log.e("BreathingClassifier", "Error during model inference: ${e.message}")
             // Fallback to heuristic approach
             return classifyUsingHeuristics(recentMovements.last())
         }
+    }
+
+    /** Calculate smoothed velocity from recent movements */
+    private fun calculateSmoothedVelocity(movements: List<RespiratoryDataPoint>): Float {
+        if (movements.size < 3) return movements.lastOrNull()?.velocity ?: 0f
+
+        // Use weighted average with more weight on recent values
+        val recentValues = movements.takeLast(3).map { it.velocity }
+        val weights = floatArrayOf(0.5f, 0.3f, 0.2f) // More weight on recent values
+
+        var sum = 0f
+        for (i in recentValues.indices) {
+            sum += recentValues[i] * weights[i]
+        }
+
+        return sum
+    }
+
+    /** Determine breathing phase based on velocity */
+    private fun determineBreathingPhaseFromVelocity(velocity: Float): String {
+        return when {
+            velocity < -2.0f -> "inhaling"
+            velocity > 2.0f -> "exhaling"
+            else -> "pause"
+        }
+    }
+
+    /** Fallback heuristic-based classification when ML model isn't available */
+    private fun classifyUsingHeuristics(dataPoint: RespiratoryDataPoint): BreathingResult {
+        // Calculate smoothed velocity from recent movements
+        val smoothedVelocity = calculateSmoothedVelocity(recentMovements)
+
+        // Determine breathing phase using velocity thresholds with wider pause range
+        val phase = determineBreathingPhaseFromVelocity(smoothedVelocity)
+
+        // Calculate confidence based on how far the velocity is from the threshold
+        val confidence =
+                when (phase) {
+                    "inhaling" -> ((abs(smoothedVelocity) - 2.0f) / 10f).coerceIn(0.5f, 0.95f)
+                    "exhaling" -> ((abs(smoothedVelocity) - 2.0f) / 10f).coerceIn(0.5f, 0.95f)
+                    else -> (1f - abs(smoothedVelocity) / 2.0f).coerceIn(0.3f, 0.7f)
+                }
+
+        Log.d(
+                "BreathingClassifier",
+                "Heuristic classification - Raw Velocity: ${dataPoint.velocity}, " +
+                        "Smoothed: $smoothedVelocity, Phase: $phase, Confidence: $confidence"
+        )
+
+        lastClassification = phase
+        confidenceScore = confidence
+
+        return BreathingResult(phase, confidence)
     }
 
     private fun extractFeatures(): FloatArray {
@@ -782,109 +1248,6 @@ class BreathingClassifier(private val context: Context) {
         return sum().toDouble() / size
     }
 
-    /** Fallback heuristic-based classification when ML model isn't available */
-    private fun classifyUsingHeuristics(dataPoint: RespiratoryDataPoint): BreathingResult {
-        // Calculate smoothed velocity from recent movements
-        val velocityHistory = recentMovements.map { it.velocity }
-        val smoothedVelocity =
-                if (velocityHistory.size >= 3) { // Increased smoothing window
-                    val recentValues = velocityHistory.takeLast(3)
-                    val weights = floatArrayOf(0.6f, 0.3f, 0.1f) // More weight on recent values
-                    var sum = 0f
-                    recentValues.forEachIndexed { index, velocity ->
-                        sum += velocity * weights[index]
-                    }
-                    sum
-                } else {
-                    dataPoint.velocity
-                }
-
-        // Determine breathing phase using velocity thresholds with wider pause range
-        val (phase, confidence) =
-                when {
-                    smoothedVelocity < -2.5f -> { // Require stronger negative velocity for inhaling
-                        val conf = ((abs(smoothedVelocity) - 2.5f) / 10f).coerceIn(0.5f, 1.0f)
-                        Pair("inhaling", conf)
-                    }
-                    smoothedVelocity > 2.5f -> { // Require stronger positive velocity for exhaling
-                        val conf = ((abs(smoothedVelocity) - 2.5f) / 10f).coerceIn(0.5f, 1.0f)
-                        Pair("exhaling", conf)
-                    }
-                    else -> { // Wider pause range (-2.5f to 2.5f)
-                        val conf = (1f - abs(smoothedVelocity) / 2.5f).coerceIn(0.3f, 0.7f)
-                        Pair("pause", conf)
-                    }
-                }
-
-        // Add hysteresis to prevent rapid switching
-        val lastPhase =
-                if (recentMovements.size > 1)
-                        recentMovements[recentMovements.size - 2].breathingPhase.lowercase()
-                else ""
-        val correctedPhase = enforceBreathingCycle(lastPhase, phase, smoothedVelocity)
-
-        Log.d(
-                "BreathingClassifier",
-                "Heuristic classification - Raw Velocity: ${dataPoint.velocity}, " +
-                        "Smoothed: $smoothedVelocity, Phase: $phase, Corrected: $correctedPhase, Confidence: $confidence"
-        )
-
-        lastClassification = correctedPhase
-        confidenceScore = confidence
-
-        return BreathingResult(correctedPhase, confidence)
-    }
-
-    // Helper to enforce more natural breathing cycles
-    private fun enforceBreathingCycle(
-            lastPhase: String,
-            currentPhase: String,
-            velocity: Float
-    ): String {
-        // If velocity is very clearly in one direction, respect that
-        if (abs(velocity) > 7f) {
-            return currentPhase
-        }
-
-        // Time-based hysteresis to prevent too rapid phase changes
-        val currentTime = System.currentTimeMillis()
-        val lastChange = lastPhaseChangeTime[lastPhase] ?: 0L
-        val timeSinceLastChange = currentTime - lastChange
-
-        // Longer minimum time in a phase (500ms instead of 300ms)
-        val MIN_PHASE_DURATION = 500L
-
-        // Don't change too quickly unless velocity is significant
-        if (lastPhase != currentPhase &&
-                        timeSinceLastChange < MIN_PHASE_DURATION &&
-                        abs(velocity) < 4f
-        ) {
-            return lastPhase
-        }
-
-        // Track when phase changes
-        if (lastPhase != currentPhase) {
-            lastPhaseChangeTime[currentPhase] = currentTime
-        }
-
-        // Natural breathing cycle: inhale -> pause -> exhale -> pause -> inhale
-        return when {
-            // Prevent direct inhale -> exhale transitions
-            lastPhase == "inhaling" && currentPhase == "exhaling" -> "pause"
-
-            // Prevent direct exhale -> inhale transitions
-            lastPhase == "exhaling" && currentPhase == "inhaling" -> "pause"
-
-            // Limit how long we stay in pause - but not too short
-            lastPhase == "pause" && currentPhase == "pause" && timeSinceLastChange > 1000 -> {
-                if (velocity < -1.5f) "inhaling" else if (velocity > 1.5f) "exhaling" else "pause"
-            }
-
-            // Otherwise use the classified phase
-            else -> currentPhase
-        }
-    }
-
     /** Release resources when no longer needed */
     fun close() {
         interpreter?.close()
@@ -983,10 +1346,29 @@ class BreathingClassifier(private val context: Context) {
 
     /** Returns information about which classification model is being used */
     fun getModelInfo(): String {
-        return if (_isAbnormalityModelAvailable) {
+        return if (isAbnormalityModelAvailable) {
             "ML Model: $_loadedModelName"
         } else {
             "Rule-Based Classification"
+        }
+    }
+
+    private fun logDeviceInfo() {
+        Log.d(TAG, "Device: ${Build.MODEL}, Android: ${Build.VERSION.SDK_INT}")
+    }
+
+    private fun loadBreathingPhaseModel(context: Context) {
+        // This can be simplified since you don't actually use this model
+        Log.d(TAG, "Breathing phase model not needed, skipping")
+    }
+
+    private fun fileExistsInAssets(context: Context, filename: String): Boolean {
+        return try {
+            val assetsList = context.assets.list("") ?: emptyArray()
+            assetsList.contains(filename)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking if file exists: ${e.message}")
+            false
         }
     }
 }

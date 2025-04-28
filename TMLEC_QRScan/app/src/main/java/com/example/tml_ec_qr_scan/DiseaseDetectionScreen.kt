@@ -408,7 +408,9 @@ private fun ResultState(result: DiagnosisResult, onReset: () -> Unit) {
                                         )
 
                                         // Add a card for detected conditions if any
-                                        if (result.detectedConditions.isNotEmpty()) {
+                                        if (result.detectedConditions.isNotEmpty() &&
+                                                        result.classification == "Abnormal"
+                                        ) {
                                                 Card(
                                                         modifier =
                                                                 Modifier.fillMaxWidth()
