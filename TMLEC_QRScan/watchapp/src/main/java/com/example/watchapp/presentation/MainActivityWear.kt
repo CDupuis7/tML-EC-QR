@@ -1,72 +1,160 @@
-/* While this template provides a good starting point for using Wear Compose, you can always
- * take a look at https://github.com/android/wear-os-samples/tree/main/ComposeStarter to find the
- * most up to date changes to the libraries and their usages.
- */
+package com.example.watchapp
 
-package com.example.watchapp.presentation
-
+import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.foundation.layout.*
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
-import androidx.wear.compose.material.TimeText
-import androidx.wear.tooling.preview.devices.WearDevices
-import com.example.watchapp.R
-import com.example.watchapp.presentation.theme.TMLEC_QRScanTheme
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.google.android.gms.wearable.DataClient
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
+import com.samsung.android.service.health.tracking.data.HealthTracker
+import com.samsung.android.service.health.tracking.data.ConnectionListener
 
-class MainActivityWear : ComponentActivity() {
+
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
+private const val DATA_PATH = "/health_data"
+
+class MainActivityWear : ComponentActivity(), HealthDataStore.ConnectionListener {
+
+    private lateinit var healthDataStore: HealthDataStore
+
     override fun onCreate(savedInstanceState: Bundle?) {
-        installSplashScreen()
-
         super.onCreate(savedInstanceState)
 
-        setTheme(android.R.style.Theme_DeviceDefault)
+        // Initialize Samsung Health SDK
+        healthDataStore = HealthDataStore(this, this)
+        healthDataStore.connect()
 
         setContent {
-            WearApp("Android")
+
+            SensorScreen(this, healthDataStore)
+
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        healthDataStore.disconnect()
+    }
+
+    override fun onConnected() {
+        Log.d("SamsungHealth", "Connected to Samsung Health")
+    }
+
+    override fun onConnectionFailed(error: HealthConnectionErrorResult?) {
+        Log.e("SamsungHealth", "Connection failed: ${error?.errorCode}")
+    }
+
+    override fun onDisconnected() {
+        Log.w("SamsungHealth", "Disconnected from Samsung Health")
     }
 }
 
 @Composable
-fun WearApp(greetingName: String) {
-    TMLEC_QRScanTheme {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colors.background),
-            contentAlignment = Alignment.Center
-        ) {
-            TimeText()
-            Greeting(greetingName = greetingName)
+fun SensorScreen(context: Context, healthDataStore: HealthDataStore) {
+    val heartRate = remember { mutableStateOf("Loading...") }
+    val spO2 = remember { mutableStateOf("Loading...") }
+    val dataClient = Wearable.getDataClient(context)
+
+    LaunchedEffect(Unit) {
+        fetchHealthData(healthDataStore, heartRate, spO2, dataClient)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colors.background),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("AMS Project", fontSize = 18.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("HR: ${heartRate.value} bpm", fontSize = 16.sp)
+            Text("SpO2: ${spO2.value}%", fontSize = 16.sp)
         }
     }
 }
 
-@Composable
-fun Greeting(greetingName: String) {
-    Text(
-        modifier = Modifier.fillMaxWidth(),
-        textAlign = TextAlign.Center,
-        color = MaterialTheme.colors.primary,
-        text = stringResource(R.string.hello_world, greetingName)
-    )
+fun fetchHealthData(
+    healthDataStore: HealthDataStore,
+    heartRate: MutableState<String>,
+    spO2: MutableState<String>,
+    dataClient: DataClient
+) {
+    val resolver = HealthDataResolver(healthDataStore, null)
+    val timeThreshold = System.currentTimeMillis() - (1000 * 60 * 10)
+
+    val heartRateRequest = HealthDataResolver.ReadRequest.Builder()
+        .setDataType(HealthConstants.HeartRate.HEART_RATE)
+        .setProperties(arrayOf(HealthConstants.HeartRate.HEART_RATE, HealthConstants.HeartRate.START_TIME))
+        .setFilter(HealthDataResolver.Filter.greaterThan(HealthConstants.HeartRate.START_TIME, timeThreshold))
+        .setSort(HealthConstants.HeartRate.START_TIME, HealthDataResolver.SortOrder.DESC)
+        .build()
+
+    resolver.read(heartRateRequest).setResultListener { result ->
+        try {
+            result?.let {
+                if (it.iterator().hasNext()) {
+                    val data = HealthData(it.iterator().next())
+                    val hrValue = data.getFloat(HealthConstants.HeartRate.HEART_RATE).toInt()
+                    heartRate.value = "$hrValue"
+                    sendDataToPhone(dataClient, heartRate.value, spO2.value)
+                } else {
+                    heartRate.value = "No Data"
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SamsungHealth", "Heart rate error", e)
+            heartRate.value = "Error"
+        }
+    }
+
+    val spO2Request = HealthDataResolver.ReadRequest.Builder()
+        .setDataType(HealthConstants.OxygenSaturation.SPO2)
+        .setProperties(arrayOf(HealthConstants.OxygenSaturation.SPO2, HealthConstants.OxygenSaturation.START_TIME))
+        .setFilter(HealthDataResolver.Filter.greaterThan(HealthConstants.OxygenSaturation.START_TIME, timeThreshold))
+        .setSort(HealthConstants.OxygenSaturation.START_TIME, HealthDataResolver.SortOrder.DESC)
+        .build()
+
+    resolver.read(spO2Request).setResultListener { result ->
+        try {
+            result?.let {
+                if (it.iterator().hasNext()) {
+                    val data = HealthData(it.iterator().next())
+                    val spO2Value = data.getFloat(HealthConstants.OxygenSaturation.SPO2).toInt()
+                    spO2.value = "$spO2Value"
+                    sendDataToPhone(dataClient, heartRate.value, spO2.value)
+                } else {
+                    spO2.value = "No Data"
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("SamsungHealth", "SpO2 error", e)
+            spO2.value = "Error"
+        }
+    }
 }
 
-@Preview(device = WearDevices.SMALL_ROUND, showSystemUi = true)
-@Composable
-fun DefaultPreview() {
-    WearApp("Preview Android")
+fun sendDataToPhone(dataClient: DataClient, heartRate: String, spO2: String) {
+    val putDataReq = PutDataMapRequest.create(DATA_PATH).apply {
+        dataMap.putString("heart_rate", heartRate)
+        dataMap.putString("spO2", spO2)
+    }.asPutDataRequest()
+
+    CoroutineScope(Dispatchers.IO).launch {
+        dataClient.putDataItem(putDataReq)
+    }
 }
