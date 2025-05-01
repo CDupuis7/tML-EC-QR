@@ -53,4 +53,5 @@
     <string name="DetailsStatusVeryLowReliability">PPG signal is too weak.</string>
     <string name="DetailsStatusNoDataFlush">flush() is called but no data.</string>
     <string name="hello_world">From the Square world,\nHello, %1$s!</string>
+
 </resources>

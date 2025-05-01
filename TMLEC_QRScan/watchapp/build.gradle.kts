@@ -43,7 +43,7 @@ android {
 dependencies {
 
     implementation(libs.play.services.wearable)
-    implementation(mapOf("name" to "samsung-health-sensor-api-1.3.0", "ext" to "aar"))
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
     implementation("com.google.android.gms:play-services-wearable:19.0.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
