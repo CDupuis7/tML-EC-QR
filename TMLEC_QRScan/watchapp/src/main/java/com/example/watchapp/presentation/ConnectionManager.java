@@ -8,7 +8,7 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 
-import com.example.amsproject.R;
+import com.example.watchapp.R;
 import com.samsung.android.service.health.tracking.ConnectionListener;
 import com.samsung.android.service.health.tracking.HealthTracker;
 import com.samsung.android.service.health.tracking.HealthTrackerException;
