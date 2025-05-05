@@ -198,8 +198,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             analysisStarted = false
 
             // Clear existing data for a fresh start
-                _respiratoryData.value = emptyList()
-                breathingDataBuffer.clear()
+            _respiratoryData.value = emptyList()
+            breathingDataBuffer.clear()
 
             // Start the countdown timer with the custom duration
             val duration = _recordingDuration.value
@@ -236,7 +236,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 break
                             }
                         }
-            }
+                    }
         }
     }
 
@@ -366,8 +366,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     .eachCount()
                     Log.d("MainViewModel", "Phase distribution: $phaseCount")
 
-                        Log.d(
-                                "MainViewModel",
+                    Log.d(
+                            "MainViewModel",
                             "Time since recording started: ${System.currentTimeMillis() - recordingStartTime}ms"
                     )
                 }
@@ -406,6 +406,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("MainViewModel", "Amplitude Variation: $amplitudeVariation")
                 Log.d("MainViewModel", "Average Velocity: $avgVelocity")
                 Log.d("MainViewModel", "----------------------------------------------------")
+
+                // Special handling for no breathing or extremely low breathing rate
+                if (breathingRate == 0.0f) {
+                    Log.d("MainViewModel", "DETECTED NO BREATHING (rate: $breathingRate)")
+                    _breathingClassification.value = "No Breathing Detected"
+                    _classificationConfidence.value = 0.95f
+                    return@launch
+                } else if (breathingRate < 1.0f) {
+                    Log.d("MainViewModel", "DETECTED VERY LOW BREATHING (rate: $breathingRate)")
+                    _breathingClassification.value = "Abnormal"
+                    _classificationConfidence.value = 0.95f
+                    return@launch
+                }
 
                 // Check if the breathing classifier is available
                 if (breathingClassifier == null) {
@@ -448,8 +461,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     Log.e("MainViewModel", "ERROR: Classification result is null!")
 
-                    // Using same logic as Python script
-                    if (breathingRate >= 12f && breathingRate <= 20f) {
+                    // Using same logic as Python script but handling no breathing case
+                    if (breathingRate == 0.0f) {
+                        _breathingClassification.value = "No Breathing Detected"
+                        _classificationConfidence.value = 0.95f
+                    } else if (breathingRate < 1.0f) {
+                        _breathingClassification.value = "Abnormal"
+                        _classificationConfidence.value = 0.95f
+                    } else if (breathingRate >= 12f && breathingRate <= 20f) {
                         _breathingClassification.value = "Normal"
                         _classificationConfidence.value = 0.85f
                     } else {
@@ -597,39 +616,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         "Analyzing disease with ${breathingDataBuffer.size} data points"
                 )
 
-                    // Calculate breathing rate from QR data
-                    val breathingRate = calculateBreathingRate()
+                // Calculate breathing rate from QR data
+                val breathingRate = calculateBreathingRate()
 
-                    // Calculate irregularity index from QR data
-                    val irregularityIndex = calculateIrregularityIndex()
+                // Calculate irregularity index from QR data
+                val irregularityIndex = calculateIrregularityIndex()
 
-                    // Calculate other metrics from QR data
-                    val amplitudeVariation = calculateAmplitudeVariation()
+                // Calculate other metrics from QR data
+                val amplitudeVariation = calculateAmplitudeVariation()
                 val durationVariability = calculateBreathingRhythmVariability()
 
-                // Execute classification using PyThon logic directly instead of calling the
+                // Execute classification using Python logic directly instead of calling the
                 // classifier
                 // NORMAL if 12 <= breathing_rate <= 20 else ABNORMAL
-                    val classification =
+                val classification =
                         if (breathingRate >= 12f && breathingRate <= 20f) "Normal" else "Abnormal"
 
                 // Detect specific breathing conditions like in the Python script
                 val detectedConditions =
                         classifyBreathingCondition(
-                                    breathingRate,
-                                    irregularityIndex,
-                                    amplitudeVariation,
+                                breathingRate,
+                                irregularityIndex,
+                                amplitudeVariation,
                                 durationVariability
                         )
                 Log.d("Classification", "Detected conditions: $detectedConditions")
 
                 // Create diagnosis result with detailed conditions
-                    val result =
-                            DiagnosisResult(
-                                    classification = classification,
+                val result =
+                        DiagnosisResult(
+                                classification = classification,
                                 confidence = 0.9f,
-                                    breathingRate = breathingRate,
-                                    irregularityIndex = irregularityIndex,
+                                breathingRate = breathingRate,
+                                irregularityIndex = irregularityIndex,
                                 recommendations =
                                         generateDetailedRecommendations(
                                                 classification,
@@ -640,21 +659,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 detectedConditions = detectedConditions,
                                 amplitudeVariability = amplitudeVariation,
                                 durationVariability = durationVariability
-                            )
+                        )
 
-                    // Update UI with result
-                    _diseaseUiState.value = DiseaseUiState.Result(result)
+                // Update UI with result
+                _diseaseUiState.value = DiseaseUiState.Result(result)
             } catch (e: Exception) {
                 Log.e("MainViewModel", "Error during disease analysis: ${e.message}")
                 Log.e("MainViewModel", "Stack trace: ${e.stackTraceToString()}")
-                    _diseaseUiState.value =
-                            DiseaseUiState.Result(
-                                    DiagnosisResult(
-                                            classification = "Error",
-                                            confidence = 0f,
-                                            breathingRate = 0f,
-                                            irregularityIndex = 0f,
-                                            recommendations =
+                _diseaseUiState.value =
+                        DiseaseUiState.Result(
+                                DiagnosisResult(
+                                        classification = "Error",
+                                        confidence = 0f,
+                                        breathingRate = 0f,
+                                        irregularityIndex = 0f,
+                                        recommendations =
                                                 listOf("Error during analysis: ${e.message}"),
                                         detectedConditions = emptyList(),
                                         amplitudeVariability = 0f,
@@ -680,6 +699,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Log.i("MAIN_CONDITION_DETECTOR", "Irregularity Index: $irregularityIndex")
         Log.i("MAIN_CONDITION_DETECTOR", "Amplitude Variation: $amplitudeVariation")
         Log.i("MAIN_CONDITION_DETECTOR", "Duration Variability: $durationVariability")
+
+        // Check for exactly zero breathing rate (No breathing)
+        if (breathingRate == 0.0f) {
+            conditions.add("No breathing detected")
+            Log.i("MAIN_CONDITION_DETECTOR", "DETECTED: No breathing (rate: $breathingRate)")
+            return conditions // Return immediately as this is the primary condition
+        }
+
+        // Check for very low breathing rate (breath holding)
+        if (breathingRate > 0f && breathingRate < 1.0f) {
+            conditions.add("Breath holding detected")
+            Log.i("MAIN_CONDITION_DETECTOR", "DETECTED: Breath holding (rate: $breathingRate)")
+            return conditions // Return immediately as this is the primary condition
+        }
 
         // Using EXACT same logic as Python script:
         // if breathing_rate < 12: print("→ Bradypnea detected (slow breathing)")
@@ -733,6 +766,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): List<String> {
         val recommendations = mutableListOf<String>()
 
+        // Special case for No Breathing Detected
+        if (classification == "No Breathing Detected") {
+            recommendations.add("No breathing was detected during the recording period.")
+            recommendations.add("This could be due to:")
+            recommendations.add("- Holding your breath during the recording")
+            recommendations.add("- Sensor not properly detecting your breathing movements")
+            recommendations.add("- Very shallow breathing that was below detection threshold")
+            recommendations.add("Consider recording again while breathing normally.")
+            return recommendations
+        }
+
         // Overall classification
         recommendations.add("Your breathing shows signs of ${classification.lowercase()} patterns.")
         recommendations.add(
@@ -742,6 +786,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Specific condition recommendations
         for (condition in detectedConditions) {
             when {
+                condition.contains("No breathing detected") -> {
+                    recommendations.add("No breathing was detected during the recording period.")
+                    recommendations.add(
+                            "This could be due to holding your breath during recording or sensor error."
+                    )
+                    recommendations.add("Consider recording again while breathing normally.")
+                }
+                condition.contains("Breath holding") -> {
+                    recommendations.add("You appear to be holding your breath during recording.")
+                    recommendations.add(
+                            "Please try recording again while breathing normally for accurate assessment."
+                    )
+                }
                 condition.contains("Bradypnea") -> {
                     recommendations.add("You have bradypnea (abnormally slow breathing rate).")
                     recommendations.add(
@@ -773,13 +830,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        // If no specific conditions, provide normal recommendation
-        if (detectedConditions.isEmpty()) {
+        // If no specific conditions (but not "No Breathing" classification), provide normal
+        // recommendation
+        if (detectedConditions.isEmpty() && classification != "No Breathing Detected") {
             recommendations.add("Your breathing pattern appears normal.")
             recommendations.add(
                     "Continue to maintain good respiratory health through regular exercise and proper breathing techniques."
             )
-        } else {
+        } else if (classification != "No Breathing Detected") {
             recommendations.add(
                     "Consider consulting a healthcare professional for proper evaluation of these findings."
             )
@@ -850,6 +908,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             timeWindows.add(Pair(currentWindowStart, dominantPhase))
         }
 
+        // Check if there's any actual breathing (inhaling/exhaling phases)
+        // Count how many of each phase we have
+        val phaseDistribution = timeWindows.groupBy { it.second }.mapValues { it.value.size }
+        val hasInhalingPhases = phaseDistribution["inhaling"] ?: 0 > 0
+        val hasExhalingPhases = phaseDistribution["exhaling"] ?: 0 > 0
+
+        // Count how many pause phases we have as a percentage
+        val totalWindows = timeWindows.size
+        val pausePhases = phaseDistribution["pause"] ?: 0
+        val pausePercentage = if (totalWindows > 0) pausePhases.toFloat() / totalWindows else 0f
+
+        Log.d("BreathingRate", "Phase distribution: $phaseDistribution")
+        Log.d(
+                "BreathingRate",
+                "Pause percentage: $pausePercentage (${pausePhases}/${totalWindows})"
+        )
+
+        // If majority of phases are pause (>80%) and minimal inhaling/exhaling, report actual low
+        // rate
+        if (pausePercentage > 0.8f && (!hasInhalingPhases || !hasExhalingPhases)) {
+            Log.d("BreathingRate", "DETECTED NO BREATHING: ${pausePercentage*100}% pauses")
+            return 0f // Report 0 breaths per minute for no breathing
+        }
+
         // Count cycles using the time windows (smoothed phases)
         var prevPhase = ""
         var inhaleSeen = false
@@ -911,8 +993,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // If the rate seems implausible, use a default value
         val finalRate =
                 if (breathingRate < 5f || breathingRate > 40f) {
-        Log.d(
-                "BreathingRate",
+                    Log.d(
+                            "BreathingRate",
                             "Calculated rate ($breathingRate) outside physiological range, using default"
                     )
                     16f // Default to middle of normal range
