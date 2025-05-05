@@ -7,7 +7,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -561,33 +560,7 @@ fun RespirationChart(
                                                                 )
                                                         }
 
-                                                        // Draw a point for each data point with
-                                                        // colored dots
-                                                        pointPositions.forEach { (point, x, y) ->
-                                                                val phase =
-                                                                        point.breathingPhase
-                                                                                .lowercase()
-                                                                                .trim()
-                                                                val dotColor =
-                                                                        when (phase) {
-                                                                                "inhaling" ->
-                                                                                        inhaleColor
-                                                                                "exhaling" ->
-                                                                                        exhaleColor
-                                                                                "pause" ->
-                                                                                        pauseColor
-                                                                                else -> Color.White
-                                                                        }
-
-                                                                // Draw a small colored dot
-                                                                drawCircle(
-                                                                        color = dotColor,
-                                                                        radius =
-                                                                                1.dp.toPx(), // Very
-                                                                        // small dots
-                                                                        center = Offset(x, y)
-                                                                )
-                                                        }
+                                                        // Data points removed as requested
                                                 }
                                         }
                                 }
@@ -602,8 +575,8 @@ fun RespirationChart(
                                                 Color.Black.copy(alpha = 0.9f)
                                         ) // Dark background for contrast
                                         .padding(
-                                                top = 12.dp,
-                                                bottom = 12.dp,
+                                                top = 16.dp, // Increased padding to avoid overlap
+                                                bottom = 16.dp,
                                                 start = 16.dp,
                                                 end = 16.dp
                                         )
@@ -614,66 +587,87 @@ fun RespirationChart(
                                         color = Color.White,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 8.dp)
+                                        modifier =
+                                                Modifier.padding(
+                                                        bottom = 12.dp
+                                                ) // Increased spacing
                                 )
 
+                                // Make the legend row horizontally scrollable with enough spacing
                                 Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier =
+                                                Modifier.fillMaxWidth()
+                                                        .padding(
+                                                                vertical = 4.dp
+                                                        ) // Added vertical padding
+                                                        .horizontalScroll(rememberScrollState()),
                                         verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                        // Inhaling index - GREEN
-                                        Box(
-                                                modifier =
-                                                        Modifier.height(1.5.dp)
-                                                                .width(40.dp)
-                                                                .background(inhaleColor)
-                                        )
-                                        Text(
-                                                "Inhaling",
-                                                color = Color.White,
-                                                modifier =
-                                                        Modifier.padding(start = 8.dp, end = 24.dp),
-                                                fontSize = 16.sp
-                                        )
+                                        // Inhaling legend - GREEN
+                                        Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(end = 24.dp)
+                                        ) {
+                                                Box(
+                                                        modifier =
+                                                                Modifier.height(1.5.dp)
+                                                                        .width(40.dp)
+                                                                        .background(inhaleColor)
+                                                )
+                                                Text(
+                                                        "Inhaling",
+                                                        color = Color.White,
+                                                        modifier = Modifier.padding(start = 8.dp),
+                                                        fontSize = 16.sp
+                                                )
+                                        }
 
-                                        // Exhaling index - BLUE
-                                        Box(
-                                                modifier =
-                                                        Modifier.height(1.5.dp)
-                                                                .width(40.dp)
-                                                                .background(exhaleColor)
-                                        )
-                                        Text(
-                                                "Exhaling",
-                                                color = Color.White,
-                                                modifier =
-                                                        Modifier.padding(start = 8.dp, end = 24.dp),
-                                                fontSize = 16.sp
-                                        )
+                                        // Exhaling legend - BLUE
+                                        Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(end = 24.dp)
+                                        ) {
+                                                Box(
+                                                        modifier =
+                                                                Modifier.height(1.5.dp)
+                                                                        .width(40.dp)
+                                                                        .background(exhaleColor)
+                                                )
+                                                Text(
+                                                        "Exhaling",
+                                                        color = Color.White,
+                                                        modifier = Modifier.padding(start = 8.dp),
+                                                        fontSize = 16.sp
+                                                )
+                                        }
 
-                                        // Pause index - YELLOW
-                                        Box(
-                                                modifier =
-                                                        Modifier.height(1.5.dp)
-                                                                .width(40.dp)
-                                                                .background(pauseColor)
-                                        )
-                                        Text(
-                                                "Pause",
-                                                color = Color.White,
-                                                modifier = Modifier.padding(start = 8.dp),
-                                                fontSize = 16.sp
-                                        )
-
-                                        Spacer(modifier = Modifier.weight(1f))
+                                        // Pause legend - YELLOW
+                                        Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(end = 24.dp)
+                                        ) {
+                                                Box(
+                                                        modifier =
+                                                                Modifier.height(1.5.dp)
+                                                                        .width(40.dp)
+                                                                        .background(pauseColor)
+                                                )
+                                                Text(
+                                                        "Pause",
+                                                        color = Color.White,
+                                                        modifier = Modifier.padding(start = 8.dp),
+                                                        fontSize = 16.sp
+                                                )
+                                        }
 
                                         // Scroll instruction
                                         if (respiratoryData.size > pointsIn4Seconds) {
                                                 Text(
-                                                        "Swipe to scroll",
+                                                        "Swipe graph to scroll",
                                                         color = Color.White.copy(alpha = 0.7f),
                                                         fontSize = 14.sp,
-                                                        fontWeight = FontWeight.Medium
+                                                        fontWeight = FontWeight.Medium,
+                                                        modifier = Modifier.padding(start = 8.dp)
                                                 )
                                         }
                                 }
