@@ -652,10 +652,6 @@ fun RecordingScreen(
                                         }
                         )
                         Text(
-                                text = "Confidence: ${(confidence * 100).toInt()}%",
-                                style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
                                 text = "Velocity: ${String.format("%.1f", velocity)}",
                                 style = MaterialTheme.typography.bodyMedium
                         )

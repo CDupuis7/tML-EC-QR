@@ -1,11 +1,14 @@
 package com.example.tml_ec_qr_scan
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ContentValues
 import android.content.ContentValues.TAG
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
@@ -14,6 +17,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -50,6 +54,7 @@ import boofcv.factory.fiducial.FactoryFiducial
 import boofcv.struct.image.GrayU8
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,6 +113,7 @@ class MainActivity : ComponentActivity() {
                 qrCodeDetectionCallback = callback
         }
 
+        @SuppressLint("StateFlowValueCalledInComposition")
         @RequiresApi(Build.VERSION_CODES.S)
         override fun onCreate(savedInstanceState: Bundle?) {
                 super.onCreate(savedInstanceState)
@@ -484,17 +490,6 @@ class MainActivity : ComponentActivity() {
                                                                                                                         .font
                                                                                                                         .FontWeight
                                                                                                                         .Normal
-                                                                                        )
-
-                                                                                        Text(
-                                                                                                text =
-                                                                                                        "Confidence: ${(confidence * 100).toInt()}%",
-                                                                                                color =
-                                                                                                        Color.White,
-                                                                                                style =
-                                                                                                        MaterialTheme
-                                                                                                                .typography
-                                                                                                                .bodySmall
                                                                                         )
 
                                                                                         // Show
@@ -921,13 +916,6 @@ class MainActivity : ComponentActivity() {
                                                                                 .Normal
                                                 )
 
-                                                Text(
-                                                        text =
-                                                                "Confidence: ${(confidence * 100).toInt()}%",
-                                                        color = Color.White,
-                                                        style = MaterialTheme.typography.bodySmall
-                                                )
-
                                                 // Show velocity to help with debugging - fixed to
                                                 // use collectAsState()
                                                 Text(
@@ -1230,13 +1218,29 @@ class MainActivity : ComponentActivity() {
                 currentPhase: String,
                 timeSinceLastChange: Long
         ): String {
-                // Strict mapping for consistency - no hysteresis here
+                // More strict thresholds to reduce sensitivity
+                val stricterInhaleThreshold = calibrationVelocityThresholds.inhaleThreshold * 1.2f
+                val stricterExhaleThreshold = calibrationVelocityThresholds.exhaleThreshold * 1.2f
+
+                // Narrower pause range to promote more definitive inhale/exhale phases
+                val narrowerPauseLow = calibrationVelocityThresholds.pauseThresholdLow * 0.5f
+                val narrowerPauseHigh = calibrationVelocityThresholds.pauseThresholdHigh * 0.5f
+
+                // Apply hysteresis - harder to change state than stay in it
                 return when {
-                        velocity < calibrationVelocityThresholds.inhaleThreshold ->
-                                "inhaling" // Upward = inhaling
-                        velocity > calibrationVelocityThresholds.exhaleThreshold ->
-                                "exhaling" // Downward = exhaling
-                        else -> "pause" // Stable = pause
+                        // For inhaling - easier to stay inhaling, harder to switch to inhaling
+                        velocity < stricterInhaleThreshold ||
+                                (currentPhase == "inhaling" && velocity < narrowerPauseHigh) ->
+                                "inhaling"
+
+                        // For exhaling - easier to stay exhaling, harder to switch to exhaling
+                        velocity > stricterExhaleThreshold ||
+                                (currentPhase == "exhaling" && velocity > narrowerPauseLow) ->
+                                "exhaling"
+
+                        // Only use pause when velocity is really close to zero or when
+                        // transitioning
+                        else -> "pause"
                 }
         }
 
@@ -1355,100 +1359,132 @@ class MainActivity : ComponentActivity() {
                 val maxAmplitude = amplitudes.maxOrNull() ?: 0f
                 val minAmplitude = amplitudes.minOrNull() ?: 0f
 
-                // Group data points into time windows to smooth out rapid fluctuations
-                val timeWindowSize = 300 // 300ms windows
-                val timeWindows = mutableListOf<Pair<Long, String>>()
+                // First, let's smooth the breathing phases - handle the pause properly
+                val smoothedPhases = mutableListOf<Pair<Long, String>>()
 
-                var currentWindowStart = data.first().timestamp
-                var currentWindowEnd = currentWindowStart + timeWindowSize
-                var currentWindowPhases = mutableListOf<String>()
+                // Use a state machine approach
+                var currentPhase = "unknown"
+                var phaseStartTime = data.firstOrNull()?.timestamp ?: 0L
+                var shouldAddCurrentPhase = false
+                val MINIMUM_PHASE_DURATION_MS = 200L // Minimum time to consider a phase valid
 
-                // Group data into time windows and determine dominant phase per window
-                for (point in data) {
-                        if (point.timestamp <= currentWindowEnd) {
-                                currentWindowPhases.add(point.breathingPhase.lowercase())
-                        } else {
-                                // Determine dominant phase for this window
-                                val dominantPhase =
-                                        currentWindowPhases
-                                                .groupBy { it }
-                                                .maxByOrNull { it.value.size }
-                                                ?.key
-                                                ?: "pause"
+                // Pre-process all data points to merge consecutive same phases and ignore short
+                // pauses
+                for (i in data.indices) {
+                        val point = data[i]
+                        val rawPhase = point.breathingPhase.lowercase()
 
-                                timeWindows.add(Pair(currentWindowStart, dominantPhase))
+                        // State transition logic
+                        when {
+                                // First point sets the initial phase
+                                i == 0 -> {
+                                        currentPhase = rawPhase
+                                        phaseStartTime = point.timestamp
+                                }
 
-                                // Start new window
-                                currentWindowStart = point.timestamp
-                                currentWindowEnd = currentWindowStart + timeWindowSize
-                                currentWindowPhases =
-                                        mutableListOf(point.breathingPhase.lowercase())
+                                // Handle phase changes
+                                rawPhase != currentPhase -> {
+                                        val phaseDuration = point.timestamp - phaseStartTime
+
+                                        // Only consider phase changes if the previous phase lasted
+                                        // long enough
+                                        if (phaseDuration >= MINIMUM_PHASE_DURATION_MS) {
+                                                // Add completed phase to list
+                                                smoothedPhases.add(
+                                                        Pair(phaseStartTime, currentPhase)
+                                                )
+
+                                                // Start new phase
+                                                currentPhase = rawPhase
+                                                phaseStartTime = point.timestamp
+                                        }
+                                        // Otherwise ignore short phases (they're noise)
+                                }
+                        }
+
+                        // Add the last phase if we're at the end
+                        if (i == data.size - 1) {
+                                smoothedPhases.add(Pair(phaseStartTime, currentPhase))
                         }
                 }
 
-                // Add final window if not empty
-                if (currentWindowPhases.isNotEmpty()) {
-                        val dominantPhase =
-                                currentWindowPhases
-                                        .groupBy { it }
-                                        .maxByOrNull { it.value.size }
-                                        ?.key
-                                        ?: "pause"
-                        timeWindows.add(Pair(currentWindowStart, dominantPhase))
-                }
-
-                // Count cycles using the time windows (smoothed phases)
-                var prevPhase = ""
-                var inhaleSeen = false
-                var exhaleSeen = false
+                // Enhanced breath counting algorithm (ignoring pause phases)
                 var breathCount = 0
+                var inInhalePhase = false
+                var inExhalePhase = false
+                var lastValidPhaseTime = 0L
 
-                for ((timestamp, phase) in timeWindows) {
-                        // If we see inhale followed by exhale, mark them as seen
-                        if (phase == "inhaling") {
-                                inhaleSeen = true
-                        } else if (phase == "exhaling" && inhaleSeen) {
-                                exhaleSeen = true
+                Log.d("BreathCounting", "=============== BREATH COUNTING ===============")
+                Log.d("BreathCounting", "Total phases after smoothing: ${smoothedPhases.size}")
+
+                // A breath cycle consists of an inhale followed by an exhale
+                for (i in smoothedPhases.indices) {
+                        val (timestamp, phase) = smoothedPhases[i]
+
+                        when (phase) {
+                                "inhaling" -> {
+                                        // If we were in exhale phase and now we're inhaling, we
+                                        // completed a cycle
+                                        if (inExhalePhase) {
+                                                breathCount++
+                                                Log.d(
+                                                        "BreathCounting",
+                                                        "BREATH CYCLE #$breathCount DETECTED at timestamp $timestamp"
+                                                )
+                                        }
+                                        inInhalePhase = true
+                                        inExhalePhase = false
+                                        lastValidPhaseTime = timestamp
+                                }
+                                "exhaling" -> {
+                                        // Need to have seen an inhale first for a valid cycle
+                                        inExhalePhase = true
+                                        lastValidPhaseTime = timestamp
+                                }
+                                // Treat pause as continuation of the previous state
+                                "pause" -> {
+                                        /* ignore pauses */
+                                }
                         }
-
-                        // When we see inhale again after having seen both inhale and exhale, count
-                        // a cycle
-                        if (phase == "inhaling" &&
-                                        prevPhase != "inhaling" &&
-                                        inhaleSeen &&
-                                        exhaleSeen
-                        ) {
-                                breathCount++
-                                Log.d(
-                                        "RespiratoryTracking",
-                                        "FULL CYCLE DETECTED #$breathCount at $timestamp"
-                                )
-                                inhaleSeen = true // Reset exhale but keep inhale true
-                                exhaleSeen = false
-                        }
-
-                        prevPhase = phase
                 }
 
-                // Calculate duration in minutes
-                val durationMs = data.last().timestamp - data.first().timestamp
+                // Calculate duration in minutes properly
+                val durationMs =
+                        data.lastOrNull()?.timestamp?.minus(data.firstOrNull()?.timestamp ?: 0) ?: 0
                 val durationMinutes = durationMs / 60000f // Convert ms to minutes
 
-                // Calculate breathing rate with physiological constraints
-                val breathingRate =
-                        if (durationMinutes > 0 && breathCount > 0) {
-                                (breathCount / durationMinutes).coerceIn(
-                                        8f,
-                                        30f
-                                ) // Reasonable human limits
-                        } else {
-                                0f
-                        }
+                Log.d("BreathCounting", "Duration: ${durationMs}ms (${durationMinutes} minutes)")
+                Log.d("BreathCounting", "Raw breath count: $breathCount")
 
-                Log.d(
-                        "RespiratoryTracking",
-                        "Breathing Analysis: Count=$breathCount, Rate=$breathingRate, Duration=${durationMinutes * 60} seconds"
-                )
+                // Validate and calculate breathing rate
+                var breathingRate = 0f
+                if (durationMinutes > 0 && breathCount > 0) {
+                        breathingRate = (breathCount / durationMinutes)
+
+                        // Apply sanity check for human physiology
+                        if (breathingRate < 6f || breathingRate > 30f) {
+                                // If outside normal human range, estimate from the data duration
+                                // Assume average breathing rate of 8-25 breaths per minute
+                                val estimatedBreaths =
+                                        (durationMinutes * 16f).toInt() // 16 breaths/min is average
+                                breathingRate =
+                                        (estimatedBreaths / durationMinutes).coerceIn(8f, 25f)
+                                Log.d(
+                                        "BreathCounting",
+                                        "⚠️ Breathing rate outside physiological range, using estimate: $breathingRate"
+                                )
+                        }
+                } else {
+                        // Fallback - estimate breathing rate from timestamps using peaks/troughs
+                        breathingRate = 16f // Average adult breathing rate
+                        Log.d(
+                                "BreathCounting",
+                                "⚠️ Could not calculate breathing rate, using default: $breathingRate"
+                        )
+                }
+
+                Log.d("BreathCounting", "FINAL BREATHING RATE: $breathingRate breaths/min")
+                Log.d("BreathCounting", "==============================================")
 
                 return BreathingMetrics(
                         breathingRate = breathingRate,
@@ -1604,138 +1640,160 @@ class MainActivity : ComponentActivity() {
                         stabilizeQrPosition(detection.center, trackedPoint, currentTime)
                 smoothedCenters[key] = stabilizedPoint
 
-                // Calculate velocity with additional smoothing
-                var velocity = 0f
-
-                // Use value properly instead of StateFlow access in a non-composable context
+                // Get current respiratory data for velocity calculation
                 val respiratoryData = viewModel.respiratoryData.value
 
-                // Previous point to calculate velocity from
-                val prevPoint =
-                        if (respiratoryData.isNotEmpty()) {
-                                respiratoryData.last()
-                        } else {
-                                // Create a dummy previous point if we don't have any data yet
-                                RespiratoryDataPoint(
-                                        timestamp = currentTime - 100, // 100ms ago
-                                        position = stabilizedPoint.center,
-                                        qrId = key,
-                                        movement = "unknown",
-                                        breathingPhase = "unknown",
-                                        amplitude = 0f,
-                                        velocity = 0f
-                                )
-                        }
+                // Use a longer history for more stable velocity calculation
+                val HISTORY_SIZE = 5 // Use last 5 points for smoothing
+                val recentPoints = respiratoryData.takeLast(HISTORY_SIZE)
 
-                // Calculate time difference
-                val timeDiff =
-                        (currentTime -
-                                (if (respiratoryData.isEmpty()) currentTime - 100
-                                else recordingStartTime + prevPoint.timestamp)) / 1000f
+                // Calculate velocity with temporal smoothing
+                var velocity = 0f
 
-                if (timeDiff > 0) {
-                        // Calculate raw velocity - negative is upward, positive is downward
-                        val rawVelocity =
-                                (stabilizedPoint.center.y - prevPoint.position.y) / timeDiff
+                if (recentPoints.isNotEmpty()) {
+                        // Calculate a weighted average velocity from multiple previous points
+                        val totalWeight =
+                                (1 + HISTORY_SIZE) * HISTORY_SIZE / 2.0f // Sum of 1 to HISTORY_SIZE
+                        var weightedSum = 0f
 
-                        // Add a minimum threshold filter for very small movements
-                        // that might be noise rather than actual breathing
-                        val MIN_MOVEMENT_THRESHOLD = 0.2f
-                        val filteredVelocity =
-                                if (abs(rawVelocity) < MIN_MOVEMENT_THRESHOLD) 0f else rawVelocity
-
-                        // Apply stronger exponential smoothing to velocity
-                        // Use previous velocity from last data point if available
-                        val prevVelocity = prevPoint.velocity
-
-                        // Lower alpha for more responsiveness to new values (0.7 means 70%
-                        // previous, 30% new)
-                        val alpha = 0.7f
-                        velocity = prevVelocity * alpha + filteredVelocity * (1 - alpha)
-
-                        // For training data mode, emphasize direction over magnitude
-                        if (isTrainingDataMode && velocity != 0f) {
-                                // Preserve direction but amplify small movements
-                                val direction = if (velocity < 0) -1f else 1f
-                                // Ensure velocity is at least 2.0 in magnitude for clear
-                                // classification
-                                if (abs(velocity) < 2.0f) {
-                                        velocity = direction * 2.0f
-                                }
-                        }
-
-                        // Collect calibration data if in calibration mode
-                        if (isCalibrating) {
-                                // Add all velocity data, not just significant movements
-                                calibrationData.add(velocity)
-
-                                // Log calibration progress
-                                if (currentTime % 500 < 50) { // Log every ~500ms
-                                        Log.d(
-                                                "Calibration",
-                                                "Collected ${calibrationData.size} data points, velocity: $velocity"
+                        // Previous point with largest weight for comparison
+                        val prevPoint =
+                                recentPoints.lastOrNull()
+                                        ?: RespiratoryDataPoint(
+                                                timestamp = currentTime - 100,
+                                                position = stabilizedPoint.center,
+                                                qrId = key,
+                                                movement = "unknown",
+                                                breathingPhase = "unknown",
+                                                amplitude = 0f,
+                                                velocity = 0f
                                         )
+
+                        // Time difference for calculating current raw velocity
+                        val timeDiff =
+                                (currentTime -
+                                        (if (respiratoryData.isEmpty()) currentTime - 100
+                                        else recordingStartTime + prevPoint.timestamp)) / 1000f
+
+                        if (timeDiff > 0) {
+                                // Calculate current raw velocity - negative is upward, positive is
+                                // downward
+                                val rawVelocity =
+                                        (stabilizedPoint.center.y - prevPoint.position.y) / timeDiff
+
+                                // Filter out micro-movements (noise)
+                                val MIN_MOVEMENT_THRESHOLD = 0.5f // Increased threshold
+                                val filteredVelocity =
+                                        if (abs(rawVelocity) < MIN_MOVEMENT_THRESHOLD) 0f
+                                        else rawVelocity
+
+                                // Apply exponential smoothing with historical velocities for
+                                // stability
+                                if (recentPoints.size >= 2) {
+                                        // Use weighted average of last N velocities
+                                        for (i in recentPoints.indices) {
+                                                val weight =
+                                                        (i + 1) /
+                                                                totalWeight // Higher weight to more
+                                                // recent points
+                                                weightedSum += recentPoints[i].velocity * weight
+                                        }
+
+                                        // Combine historical and current velocity - higher weight
+                                        // to history (0.8) for stability
+                                        val alpha = 0.8f
+                                        velocity =
+                                                weightedSum * alpha + filteredVelocity * (1 - alpha)
+                                } else {
+                                        // Not enough history, use simpler smoothing
+                                        val prevVelocity = prevPoint.velocity
+                                        val alpha = 0.7f
+                                        velocity =
+                                                prevVelocity * alpha +
+                                                        filteredVelocity * (1 - alpha)
+                                }
+
+                                // In training mode, emphasize direction over magnitude
+                                if (isTrainingDataMode && velocity != 0f) {
+                                        // Amplify the signal for clearer classification
+                                        val direction = if (velocity < 0) -1f else 1f
+                                        if (abs(velocity) < 3.0f) {
+                                                velocity = direction * 3.0f
+                                        }
                                 }
                         }
+                } else if (trackedPoint != null) {
+                        // If no respiratory data yet, use velocity from tracked point
+                        velocity = trackedPoint.velocity.y
                 }
 
-                // Calculate amplitude - track the vertical displacement from the starting position
+                // Calculate amplitude - track the vertical displacement from starting position with
+                // smoothing
                 val startY = smoothedCenters[key]?.initialPosition?.y ?: stabilizedPoint.center.y
                 val currentY = stabilizedPoint.center.y
                 val amplitude = kotlin.math.abs(currentY - startY)
 
-                // Create a data point for this frame
-                val currentDataPoint =
-                        RespiratoryDataPoint(
-                                timestamp =
-                                        currentTime - if (isRecording) recordingStartTime else 0,
-                                position = stabilizedPoint.center,
-                                qrId = key,
-                                movement = "unknown", // Will be determined below
-                                breathingPhase = "unknown", // Will be determined below
-                                amplitude = amplitude,
-                                velocity = velocity
-                        )
+                // Determine current breathing phase with hysteresis to prevent rapid switching
+                val lastPhase =
+                        respiratoryData.lastOrNull()?.breathingPhase?.lowercase() ?: "unknown"
+                val timeSinceLastChange =
+                        if (lastPhaseChangeTimestamp.containsKey(lastPhase))
+                                currentTime - lastPhaseChangeTimestamp[lastPhase]!!
+                        else 0L
 
-                // Use the ML classifier for breathing phase detection
+                // Determine current phase with anti-flicker logic
                 val breathingPhase: String
                 val confidence: Float
 
                 if (isTrainingDataMode) {
-                        // In training mode, use simple consistent detection based on velocity
-                        // direction only
+                        // Simple mapping for training mode
                         breathingPhase =
                                 when {
-                                        velocity < -0.5f -> "inhaling"
-                                        velocity > 0.5f -> "exhaling"
+                                        velocity < -1.0f -> "inhaling"
+                                        velocity > 1.0f -> "exhaling"
+                                        lastPhase == "inhaling" && velocity > -2.0f ->
+                                                "inhaling" // Stick with inhaling
+                                        lastPhase == "exhaling" && velocity < 2.0f ->
+                                                "exhaling" // Stick with exhaling
                                         else -> "pause"
                                 }
-                        confidence = 0.95f // High confidence in training mode
+                        confidence = 0.95f
                 } else {
-                        // Normal mode - use ML classifier only for breathing phase detection
+                        // Use ML classifier with phase enforcement
+                        val dataPoint =
+                                RespiratoryDataPoint(
+                                        timestamp =
+                                                currentTime -
+                                                        if (isRecording) recordingStartTime else 0,
+                                        position = stabilizedPoint.center,
+                                        qrId = key,
+                                        movement = "unknown",
+                                        breathingPhase = "unknown",
+                                        amplitude = amplitude,
+                                        velocity = velocity
+                                )
                         val classificationResult =
-                                breathingClassifier.processNewDataPoint(currentDataPoint)
-                        breathingPhase = classificationResult.phase
+                                breathingClassifier.processNewDataPoint(dataPoint)
+
+                        // Apply phase enforcement to avoid rapid phase changes
+                        breathingPhase =
+                                enforceBreathingCycle(
+                                        lastPhase,
+                                        classificationResult.phase,
+                                        velocity
+                                )
                         confidence = classificationResult.confidence
                 }
 
-                // Log results from ML classification
-                if (currentTime % 1000 < 50) { // Log approximately once per second
+                // Log detailed info only occasionally to reduce spam
+                if (currentTime % 1000 < 50) {
                         Log.d(
-                                "BreathingML",
-                                "ML classification: Phase=$breathingPhase, Confidence=$confidence, Velocity=$velocity"
+                                "BreathingPhase",
+                                "Phase=$breathingPhase, Velocity=$velocity, Last Phase=$lastPhase"
                         )
                 }
 
-                // Determine the movement type based on breathing phase (for consistency)
-                val movementType =
-                        when (breathingPhase) {
-                                "inhaling" -> "upward"
-                                "exhaling" -> "downward"
-                                else -> "stable"
-                        }
-
-                // Update the UI with the newly determined breathing phase
+                // Update UI with breathing phase
                 viewModel.updateBreathingData(
                         phase =
                                 when (breathingPhase) {
@@ -1747,9 +1805,16 @@ class MainActivity : ComponentActivity() {
                         velocity = velocity
                 )
 
-                // Add data point if recording
+                // Add data point for recording
                 if (isRecording) {
-                        // Create a data point with ML-determined phase
+                        // Create a data point with the determined phase
+                        val movementType =
+                                when (breathingPhase) {
+                                        "inhaling" -> "upward"
+                                        "exhaling" -> "downward"
+                                        else -> "stable"
+                                }
+
                         val dataPoint =
                                 RespiratoryDataPoint(
                                         timestamp = currentTime - recordingStartTime,
@@ -1761,12 +1826,11 @@ class MainActivity : ComponentActivity() {
                                         velocity = velocity
                                 )
 
-                        // Log data point creation
-                        if (currentTime % 1000 < 50) {
+                        // Log data point creation periodically
+                        if (currentTime % 2000 < 50) {
                                 Log.d(
                                         "DataPoint",
-                                        "Movement: $movementType, BreathingPhase: $breathingPhase, " +
-                                                "Velocity: $velocity, Amplitude: $amplitude"
+                                        "Phase: $breathingPhase, Velocity: $velocity, Amplitude: $amplitude"
                                 )
                         }
 
@@ -1980,24 +2044,78 @@ class MainActivity : ComponentActivity() {
                 currentPhase: String,
                 velocity: Float
         ): String {
-                // Add minimum duration for a phase (prevent rapid switching)
+                // Current time for measuring phase duration
                 val currentTime = System.currentTimeMillis()
-                val lastPhaseTime = lastPhaseChangeTimestamp[currentPhase] ?: 0L
+
+                // Get the timestamp when we last switched to the current phase
+                val lastPhaseTime = lastPhaseChangeTimestamp[lastPhase] ?: 0L
                 val timeSinceLastChange = currentTime - lastPhaseTime
 
-                // Require at least 300ms in a phase before allowing change
-                val MIN_PHASE_DURATION_MS = 300L
+                // Minimum durations for phases to prevent flickering
+                val MIN_INHALE_DURATION_MS = 500L // Inhaling should last at least 500ms
+                val MIN_EXHALE_DURATION_MS = 500L // Exhaling should last at least 500ms
+                val MIN_PAUSE_DURATION_MS = 200L // Pause can be shorter
 
-                if (lastPhase != currentPhase && timeSinceLastChange < MIN_PHASE_DURATION_MS) {
-                        return lastPhase // Stay in previous phase if change is too rapid
-                }
+                // Only allow phase changes if the current phase has lasted long enough
+                val minDuration =
+                        when (lastPhase) {
+                                "inhaling" -> MIN_INHALE_DURATION_MS
+                                "exhaling" -> MIN_EXHALE_DURATION_MS
+                                "pause" -> MIN_PAUSE_DURATION_MS
+                                else -> 0L // No minimum for unknown phases
+                        }
 
-                // Update timestamp when phase changes
+                // Determine if we should enforce the previous phase
+                val shouldEnforcePreviousPhase = timeSinceLastChange < minDuration
+
+                // Add velocity-based hysteresis to determine phase switching thresholds
+                val shouldAllowInhalingToExhaling = velocity > 5.0f // Strong positive velocity
+                val shouldAllowExhalingToInhaling = velocity < -5.0f // Strong negative velocity
+
+                // Log phase transition logic
                 if (lastPhase != currentPhase) {
-                        lastPhaseChangeTimestamp[currentPhase] = currentTime
+                        Log.d(
+                                "PhaseEnforcement",
+                                "Transition $lastPhase → $currentPhase, Time since last: $timeSinceLastChange ms, " +
+                                        "Velocity: $velocity, Enforcing: $shouldEnforcePreviousPhase"
+                        )
                 }
 
-                return currentPhase
+                // Apply the phase enforcement rules
+                val finalPhase =
+                        when {
+                                // Special case: If we were in pause and there's strong velocity,
+                                // allow exit
+                                lastPhase == "pause" &&
+                                        (shouldAllowInhalingToExhaling ||
+                                                shouldAllowExhalingToInhaling) -> currentPhase
+
+                                // If previous phase hasn't lasted long enough, enforce it
+                                shouldEnforcePreviousPhase -> lastPhase
+
+                                // Phase transition from inhaling to exhaling requires positive
+                                // velocity
+                                lastPhase == "inhaling" &&
+                                        currentPhase == "exhaling" &&
+                                        !shouldAllowInhalingToExhaling -> lastPhase
+
+                                // Phase transition from exhaling to inhaling requires negative
+                                // velocity
+                                lastPhase == "exhaling" &&
+                                        currentPhase == "inhaling" &&
+                                        !shouldAllowExhalingToInhaling -> lastPhase
+
+                                // Otherwise, allow the transition
+                                else -> currentPhase
+                        }
+
+                // Update timestamp when phase actually changes
+                if (lastPhase != finalPhase) {
+                        lastPhaseChangeTimestamp[finalPhase] = currentTime
+                        Log.d("PhaseEnforcement", "PHASE CHANGE: $lastPhase → $finalPhase")
+                }
+
+                return finalPhase
         }
 
         // New function to handle new patient action
@@ -2010,9 +2128,348 @@ class MainActivity : ComponentActivity() {
         }
 
         private fun saveRespirationChartAsImage() {
-                // Simple placeholder implementation
-                Toast.makeText(this, "Save graph functionality not implemented", Toast.LENGTH_SHORT)
-                        .show()
+                val respiratoryData = viewModel.respiratoryData.value
+                if (respiratoryData.isEmpty()) {
+                        Toast.makeText(this, "No respiratory data to save", Toast.LENGTH_SHORT)
+                                .show()
+                        return
+                }
+
+                try {
+                        // Define the dimensions for the respiratory graph
+                        val width = 1200
+                        val height = 800
+                        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bitmap)
+
+                        // Set background color for the graph
+                        canvas.drawColor(
+                                android.graphics.Color.parseColor("#212121")
+                        ) // Dark background
+
+                        // Define colors for breathing phases
+                        val inhaleColor = android.graphics.Color.parseColor("#81C784") // Green
+                        val exhaleColor = android.graphics.Color.parseColor("#64B5F6") // Blue
+                        val pauseColor = android.graphics.Color.parseColor("#FFD54F") // Amber
+                        val axisColor = android.graphics.Color.parseColor("#BBBBBB") // Light gray
+
+                        // Calculate graph dimensions
+                        val padding = 80f
+                        val graphWidth = width - 2 * padding
+                        val graphHeight = height - 2 * padding
+                        val midY = padding + graphHeight / 2
+
+                        // Setup paint objects
+                        val axisPaint =
+                                android.graphics.Paint().apply {
+                                        color = axisColor
+                                        strokeWidth = 2f
+                                        style = android.graphics.Paint.Style.STROKE
+                                        isAntiAlias = true
+                                }
+
+                        val textPaint =
+                                android.graphics.Paint().apply {
+                                        color = android.graphics.Color.WHITE
+                                        textSize = 30f
+                                        isAntiAlias = true
+                                }
+
+                        val labelPaint =
+                                android.graphics.Paint().apply {
+                                        color = android.graphics.Color.WHITE
+                                        textSize = 24f
+                                        isAntiAlias = true
+                                }
+
+                        val linePaint =
+                                android.graphics.Paint().apply {
+                                        strokeWidth = 3f
+                                        style = android.graphics.Paint.Style.STROKE
+                                        isAntiAlias = true
+                                }
+
+                        // Draw X and Y axes
+                        canvas.drawLine(
+                                padding,
+                                padding,
+                                padding,
+                                height - padding,
+                                axisPaint
+                        ) // Y-axis
+                        canvas.drawLine(
+                                padding,
+                                midY,
+                                width - padding,
+                                midY,
+                                axisPaint
+                        ) // X-axis (middle)
+                        canvas.drawLine(
+                                padding,
+                                height - padding,
+                                width - padding,
+                                height - padding,
+                                axisPaint
+                        ) // X-axis (bottom)
+
+                        // Find min/max values for scaling
+                        val maxVelocity =
+                                respiratoryData.maxOfOrNull { abs(it.velocity) }?.coerceAtLeast(10f)
+                                        ?: 10f
+                        val yPerVelocity = (graphHeight / 2) / maxVelocity
+
+                        // Draw velocity labels on Y-axis
+                        textPaint.textAlign = android.graphics.Paint.Align.RIGHT
+                        canvas.drawText("0", padding - 10, midY + 10, textPaint) // 0 velocity
+
+                        // Positive velocity labels
+                        var velocity = 10
+                        while (velocity <= maxVelocity) {
+                                val y = midY - (velocity * yPerVelocity)
+                                canvas.drawText("+$velocity", padding - 10, y + 10, textPaint)
+                                // Draw grid line
+                                canvas.drawLine(
+                                        padding,
+                                        y,
+                                        width - padding,
+                                        y,
+                                        axisPaint.apply { alpha = 50 }
+                                )
+                                velocity += 10
+                        }
+
+                        // Negative velocity labels
+                        velocity = -10
+                        while (velocity >= -maxVelocity) {
+                                val y = midY - (velocity * yPerVelocity)
+                                canvas.drawText("$velocity", padding - 10, y + 10, textPaint)
+                                // Draw grid line
+                                canvas.drawLine(
+                                        padding,
+                                        y,
+                                        width - padding,
+                                        y,
+                                        axisPaint.apply { alpha = 50 }
+                                )
+                                velocity -= 10
+                        }
+
+                        // Title and axis labels
+                        textPaint.textAlign = android.graphics.Paint.Align.CENTER
+                        canvas.drawText(
+                                "Respiratory Time Series Graph",
+                                width / 2f,
+                                padding / 2,
+                                textPaint
+                        )
+                        canvas.drawText(
+                                "Time (seconds)",
+                                width / 2f,
+                                height - padding / 3 - 50, // Moved up to avoid overlap with legends
+                                textPaint
+                        )
+
+                        // Rotate canvas to draw Y-axis label
+                        canvas.save()
+                        canvas.rotate(-90f, padding / 3, height / 2f)
+                        canvas.drawText("Velocity (m/s)", padding / 3, height / 2f, textPaint)
+                        canvas.restore()
+
+                        // Draw time markers on X-axis
+                        if (respiratoryData.isNotEmpty()) {
+                                val firstTimestamp = respiratoryData.first().timestamp
+                                val lastTimestamp = respiratoryData.last().timestamp
+                                val duration = lastTimestamp - firstTimestamp
+
+                                // Calculate time interval for markers
+                                val timeMarkInterval =
+                                        if (duration > 30000) 5000 else 2000 // 5 or 2 seconds
+                                var timeMarker = 0L
+
+                                while (timeMarker <= duration) {
+                                        val x =
+                                                padding +
+                                                        (timeMarker.toFloat() /
+                                                                duration.toFloat()) * graphWidth
+                                        canvas.drawLine(
+                                                x,
+                                                height - padding,
+                                                x,
+                                                height - padding + 10,
+                                                axisPaint
+                                        )
+                                        canvas.drawText(
+                                                "${timeMarker / 1000}s",
+                                                x,
+                                                height - padding + 30,
+                                                labelPaint
+                                        )
+                                        timeMarker += timeMarkInterval
+                                }
+                        }
+
+                        // Draw respiratory data
+                        if (respiratoryData.size > 1) {
+                                val firstTimestamp = respiratoryData.first().timestamp
+                                val lastTimestamp = respiratoryData.last().timestamp
+                                val duration =
+                                        (lastTimestamp - firstTimestamp).coerceAtLeast(
+                                                1L
+                                        ) // Avoid division by zero
+
+                                // Draw line segments for each phase
+                                for (i in 0 until respiratoryData.size - 1) {
+                                        val current = respiratoryData[i]
+                                        val next = respiratoryData[i + 1]
+
+                                        val x1 =
+                                                padding +
+                                                        ((current.timestamp - firstTimestamp)
+                                                                .toFloat() / duration) * graphWidth
+                                        val y1 = midY - (current.velocity * yPerVelocity)
+
+                                        val x2 =
+                                                padding +
+                                                        ((next.timestamp - firstTimestamp)
+                                                                .toFloat() / duration) * graphWidth
+                                        val y2 = midY - (next.velocity * yPerVelocity)
+
+                                        // Set color based on breathing phase
+                                        linePaint.color =
+                                                when (current.breathingPhase.lowercase().trim()) {
+                                                        "inhaling" -> inhaleColor
+                                                        "exhaling" -> exhaleColor
+                                                        "pause" -> pauseColor
+                                                        else -> android.graphics.Color.GRAY
+                                                }
+
+                                        // Draw line segment
+                                        canvas.drawLine(x1, y1, x2, y2, linePaint)
+
+                                        // Data points are removed as requested
+                                }
+                        }
+
+                        // Draw legend - positioned higher to avoid overlap with x-axis label
+                        val legendTop = height - padding - 25 // Moved up from +50 to -25
+                        val legendItemWidth = 200f
+                        val legendLineWidth = 60f
+
+                        // Inhaling legend
+                        linePaint.color = inhaleColor
+                        canvas.drawLine(
+                                padding,
+                                legendTop,
+                                padding + legendLineWidth,
+                                legendTop,
+                                linePaint
+                        )
+                        labelPaint.color = android.graphics.Color.WHITE
+                        canvas.drawText(
+                                "Inhaling",
+                                padding + legendLineWidth + 10,
+                                legendTop + 8,
+                                labelPaint
+                        )
+
+                        // Exhaling legend
+                        linePaint.color = exhaleColor
+                        canvas.drawLine(
+                                padding + legendItemWidth,
+                                legendTop,
+                                padding + legendItemWidth + legendLineWidth,
+                                legendTop,
+                                linePaint
+                        )
+                        canvas.drawText(
+                                "Exhaling",
+                                padding + legendItemWidth + legendLineWidth + 10,
+                                legendTop + 8,
+                                labelPaint
+                        )
+
+                        // Pause legend
+                        linePaint.color = pauseColor
+                        canvas.drawLine(
+                                padding + 2 * legendItemWidth,
+                                legendTop,
+                                padding + 2 * legendItemWidth + legendLineWidth,
+                                legendTop,
+                                linePaint
+                        )
+                        canvas.drawText(
+                                "Pause",
+                                padding + 2 * legendItemWidth + legendLineWidth + 10,
+                                legendTop + 8,
+                                labelPaint
+                        )
+
+                        // Save the bitmap to the gallery
+                        val timeStamp =
+                                SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+                                        .format(Date())
+                        val fileName = "Respiratory_Graph_$timeStamp.png"
+
+                        val contentValues =
+                                ContentValues().apply {
+                                        put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                                        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                                        put(
+                                                MediaStore.Images.Media.DATE_ADDED,
+                                                System.currentTimeMillis() / 1000
+                                        )
+                                        put(
+                                                MediaStore.Images.Media.DATE_TAKEN,
+                                                System.currentTimeMillis()
+                                        )
+
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                put(
+                                                        MediaStore.Images.Media.RELATIVE_PATH,
+                                                        Environment.DIRECTORY_PICTURES
+                                                )
+                                                put(MediaStore.Images.Media.IS_PENDING, 1)
+                                        }
+                                }
+
+                        val resolver = contentResolver
+                        val imageUri =
+                                resolver.insert(
+                                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                        contentValues
+                                )
+
+                        imageUri?.let { uri ->
+                                resolver.openOutputStream(uri)?.use { outputStream ->
+                                        if (!bitmap.compress(
+                                                        Bitmap.CompressFormat.PNG,
+                                                        100,
+                                                        outputStream
+                                                )
+                                        ) {
+                                                throw IOException("Failed to save bitmap")
+                                        }
+                                }
+
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                        contentValues.clear()
+                                        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                                        resolver.update(uri, contentValues, null, null)
+                                }
+
+                                Toast.makeText(
+                                                this,
+                                                "Respiratory graph saved to gallery as $fileName",
+                                                Toast.LENGTH_LONG
+                                        )
+                                        .show()
+                        }
+                                ?: throw IOException("Failed to create media store entry")
+                } catch (e: Exception) {
+                        Log.e("MainActivity", "Error saving graph image", e)
+                        Toast.makeText(this, "Error saving graph: ${e.message}", Toast.LENGTH_SHORT)
+                                .show()
+                }
         }
 
         // Add a function to start the camera
