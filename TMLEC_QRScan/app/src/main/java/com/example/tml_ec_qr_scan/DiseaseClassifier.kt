@@ -198,6 +198,20 @@ class DiseaseClassifier(private val context: Context) {
         ): List<String> {
                 val conditions = mutableListOf<String>()
 
+                // Check for exactly zero breathing rate (No breathing)
+                if (breathingRate == 0.0f) {
+                        conditions.add("No breathing detected")
+                        Log.d(TAG, "DETECTED NO BREATHING: Rate = $breathingRate breaths/min")
+                        return conditions // Return immediately as this is the primary condition
+                }
+
+                // Check for very low breathing rate (breath holding)
+                if (breathingRate > 0f && breathingRate < 1.0f) {
+                        conditions.add("Breath holding detected")
+                        Log.d(TAG, "DETECTED BREATH HOLDING: Rate = $breathingRate breaths/min")
+                        return conditions // Return immediately as this is the primary condition
+                }
+
                 // Detect bradypnea (abnormally slow breathing)
                 if (breathingRate < BRADYPNEA_THRESHOLD) {
                         conditions.add("Bradypnea (slow breathing)")
