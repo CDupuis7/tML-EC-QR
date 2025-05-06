@@ -12,6 +12,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.wear.compose.material.Button
@@ -21,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import com.samsung.android.service.health.tracking.HealthTrackerException
@@ -112,13 +114,22 @@ class MainActivityWear : ComponentActivity(), ConnectionObserver, SensorEventLis
                 .background(MaterialTheme.colors.background)
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ) {
+            Image(
+                painter = painterResource(id = R.drawable.logos),
+                contentDescription = "App Logo",
+                modifier = Modifier
+                    .height(68.dp)
+                    .width(98.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
             Text("Heart Rate: ${hrTextState.value}")
             Text("SpO2: ${spO2TextState.value}")
             Text("Status: ${statusTextState.value}")
         }
     }
+
 
     override fun onSensorChanged(event: SensorEvent?) {
         if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER) {
