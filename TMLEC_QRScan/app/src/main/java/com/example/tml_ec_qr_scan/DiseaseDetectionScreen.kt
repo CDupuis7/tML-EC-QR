@@ -18,7 +18,13 @@ import androidx.compose.ui.unit.dp
 
 /** Screen for respiratory disease detection using audio analysis */
 @Composable
-fun DiseaseDetectionScreen(viewModel: MainViewModel, onBackToMain: () -> Unit) {
+
+fun DiseaseDetectionScreen(
+        viewModel: MainViewModel,
+        onBackToMain: () -> Unit,
+        onBackClick: () -> Unit = {}
+) {
+
         val diseaseUiState by viewModel.diseaseUiState.collectAsState()
 
         Column(
@@ -26,6 +32,16 @@ fun DiseaseDetectionScreen(viewModel: MainViewModel, onBackToMain: () -> Unit) {
                         Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
+
+                // Back button at the top
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        BackButton(
+                                onBackClick = onBackClick,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                }
+
+
                 Text(
                         text = "Respiratory Health Analysis",
                         style = MaterialTheme.typography.headlineMedium,
