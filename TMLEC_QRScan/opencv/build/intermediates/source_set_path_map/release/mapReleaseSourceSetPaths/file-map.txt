@@ -1,0 +1,23 @@
+org.opencv-startup-runtime-1.1.1-0 C:\Users\MSI\.gradle\caches\8.10.2\transforms\3f87e5fcc33c433adf7417ab3d3aaabe\transformed\startup-runtime-1.1.1\res
+org.opencv-lifecycle-runtime-2.5.1-1 C:\Users\MSI\.gradle\caches\8.10.2\transforms\538eed6ff457c2c30e2a351fa67248d2\transformed\lifecycle-runtime-2.5.1\res
+org.opencv-lifecycle-viewmodel-savedstate-2.5.1-2 C:\Users\MSI\.gradle\caches\8.10.2\transforms\5e9080d8d6f86732c9116c7c077e3ea6\transformed\lifecycle-viewmodel-savedstate-2.5.1\res
+org.opencv-emoji2-views-helper-1.2.0-3 C:\Users\MSI\.gradle\caches\8.10.2\transforms\66062b4e8dfa27a0a266b000df3bff5b\transformed\emoji2-views-helper-1.2.0\res
+org.opencv-core-1.12.0-4 C:\Users\MSI\.gradle\caches\8.10.2\transforms\6daf4c13e266acdd02f03856a342bc1c\transformed\core-1.12.0\res
+org.opencv-annotation-experimental-1.3.0-5 C:\Users\MSI\.gradle\caches\8.10.2\transforms\7644a4932a718eb193b1368fff8c0f3f\transformed\annotation-experimental-1.3.0\res
+org.opencv-appcompat-resources-1.6.1-6 C:\Users\MSI\.gradle\caches\8.10.2\transforms\8e89c5cb3610a13c5a01a5016fba2ed5\transformed\appcompat-resources-1.6.1\res
+org.opencv-appcompat-1.6.1-7 C:\Users\MSI\.gradle\caches\8.10.2\transforms\96649981ad28f6c1011774a321293b1f\transformed\appcompat-1.6.1\res
+org.opencv-lifecycle-viewmodel-2.5.1-8 C:\Users\MSI\.gradle\caches\8.10.2\transforms\966f7d96b2c9fa29d0ca2f73b2f0cf7b\transformed\lifecycle-viewmodel-2.5.1\res
+org.opencv-core-ktx-1.12.0-9 C:\Users\MSI\.gradle\caches\8.10.2\transforms\a1fe564d936727d8a828dda13579405c\transformed\core-ktx-1.12.0\res
+org.opencv-activity-1.6.0-10 C:\Users\MSI\.gradle\caches\8.10.2\transforms\d8e1ac7e895da8e5fb1517893225675b\transformed\activity-1.6.0\res
+org.opencv-fragment-1.3.6-11 C:\Users\MSI\.gradle\caches\8.10.2\transforms\e6ae71ade82f80764769bb884b074225\transformed\fragment-1.3.6\res
+org.opencv-lifecycle-process-2.4.1-12 C:\Users\MSI\.gradle\caches\8.10.2\transforms\ed14de341f816c7dcbe3a6189901b392\transformed\lifecycle-process-2.4.1\res
+org.opencv-emoji2-1.2.0-13 C:\Users\MSI\.gradle\caches\8.10.2\transforms\f66569c10d35d5bdcb327736e9127339\transformed\emoji2-1.2.0\res
+org.opencv-lifecycle-livedata-core-2.5.1-14 C:\Users\MSI\.gradle\caches\8.10.2\transforms\f802241d8fbbecb3ad65a757da9bbb65\transformed\lifecycle-livedata-core-2.5.1\res
+org.opencv-savedstate-1.2.0-15 C:\Users\MSI\.gradle\caches\8.10.2\transforms\fc155c806327cd76b7c44dd2ba4bfd74\transformed\savedstate-1.2.0\res
+org.opencv-pngs-16 D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\generated\res\pngs\release
+org.opencv-resValues-17 D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\generated\res\resValues\release
+org.opencv-mergeReleaseResources-18 D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\incremental\release\mergeReleaseResources\merged.dir
+org.opencv-mergeReleaseResources-19 D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\incremental\release\mergeReleaseResources\stripped.dir
+org.opencv-release-20 D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\merged_res\release\mergeReleaseResources
+org.opencv-main-21 D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\src\main\res
+org.opencv-release-22 D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\src\release\res

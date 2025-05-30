@@ -1,0 +1,6 @@
+[
+    {
+        "merged": "org.opencv-release-19:/anim-v21/fragment_fast_out_extra_slow_in.xml",
+        "source": "org.opencv-fragment-1.3.6-11:/anim-v21/fragment_fast_out_extra_slow_in.xml"
+    }
+]

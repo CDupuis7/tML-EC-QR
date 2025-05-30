@@ -1,0 +1,17 @@
+path: ../datasets/qr_codes # dataset root dir
+train: images/train # train images
+val: images/val # validation images
+test: images/test # test images (optional)
+
+# Classes
+nc: 1 # number of classes
+names: ["qr_code"] # class names
+
+# Download script/URL (optional)
+download: |
+  from utils.general import download, Path
+
+  # Download QR code dataset
+  dir = Path(yaml['path'])
+  urls = ['https://github.com/dynamsoft-dbr/yolov5-qr/releases/download/v1.0/qr_dataset.zip']
+  download(urls, dir=dir)

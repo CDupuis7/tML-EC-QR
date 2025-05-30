@@ -1,0 +1,34 @@
+{
+    "logs": [
+        {
+            "outputFile": "org.opencv-mergeReleaseResources-17:/values-v18/values-v18.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\MSI\\.gradle\\caches\\8.10.2\\transforms\\96649981ad28f6c1011774a321293b1f\\transformed\\appcompat-1.6.1\\res\\values-v18\\values-v18.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "48",
+                        "endOffsets": "99"
+                    }
+                }
+            ]
+        },
+        {
+            "outputFile": "org.opencv-release-19:/values-v18/values-v18.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\MSI\\.gradle\\caches\\8.10.2\\transforms\\96649981ad28f6c1011774a321293b1f\\transformed\\appcompat-1.6.1\\res\\values-v18\\values-v18.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "48",
+                        "endOffsets": "99"
+                    }
+                }
+            ]
+        }
+    ]
+}

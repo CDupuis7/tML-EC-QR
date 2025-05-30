@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml:2:13-83
+INJECTED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml:2:13-83
+	package
+		INJECTED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml
+	xmlns:android
+		ADDED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml:2:23-81
+uses-sdk
+INJECTED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml reason: use-sdk injection requested
+INJECTED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml
+INJECTED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml
+	android:targetSdkVersion
+		INJECTED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml
+	android:minSdkVersion
+		INJECTED from D:\usa\Louisina lafayette\Courses\research 619\QR_Kotlin app\tML-EC-QR\TMLEC_QRScan\opencv\build\intermediates\tmp\ProcessLibraryManifest\release\tempAndroidManifest14309201487669223164.xml

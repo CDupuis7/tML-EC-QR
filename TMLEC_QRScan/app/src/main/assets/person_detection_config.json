@@ -1,0 +1,14 @@
+{
+  "model_name": "yolo_person_detector",
+  "input_size": 640,
+  "classes": [
+    "person"
+  ],
+  "class_id": 0,
+  "confidence_threshold": 0.5,
+  "iou_threshold": 0.4,
+  "chest_region_ratio": {
+    "top_offset": 0.15,
+    "height_ratio": 0.4
+  }
+}

@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.8.1" type="incidents">
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.core:core-ktx than 1.12.0 is available: 1.16.0">
+        <fix-replace
+            description="Change to 1.16.0"
+            family="Update versions"
+            oldString="1.12.0"
+            replacement="1.16.0"
+            priority="0"/>
+        <location
+            file="${:opencv*projectDir}/build.gradle.kts"
+            line="38"
+            column="20"
+            startOffset="827"
+            endLine="38"
+            endColumn="51"
+            endOffset="858"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.appcompat:appcompat than 1.6.1 is available: 1.7.0">
+        <fix-replace
+            description="Change to 1.7.0"
+            family="Update versions"
+            oldString="1.6.1"
+            replacement="1.7.0"
+            priority="0"/>
+        <location
+            file="${:opencv*projectDir}/build.gradle.kts"
+            line="39"
+            column="20"
+            startOffset="879"
+            endLine="39"
+            endColumn="56"
+            endOffset="915"/>
+    </incident>
+
+    <incident
+        id="UseTomlInstead"
+        severity="warning"
+        message="Use version catalog instead (androidx.core:core-ktx is already available as `androidx-core-ktx`, but using version 1.10.1 instead)">
+        <fix-alternatives>
+            <fix-composite
+                description="Replace with new library catalog declaration for androidx-core-ktx-v1120"
+                robot="true"
+                independent="true">
+                <fix-replace
+                    description="Replace with coreKtxVersion = &quot;1.12.0&quot;..."
+                    robot="true"
+                    independent="true"
+                    oldString="_lint_insert_begin_"
+                    replacement="coreKtxVersion = &quot;1.12.0&quot;&#xA;"
+                    priority="0">
+                    <range
+                        file="../gradle/libs.versions.toml"
+                        startOffset="131"
+                        endOffset="131"/>
+                </fix-replace>
+                <fix-replace
+                    description="Replace with androidx-core-ktx-v1120 = { module = &quot;androidx.core:core-ktx&quot;, version.ref = &quot;coreKtxVersion&quot; }..."
+                    robot="true"
+                    independent="true"
+                    oldString="_lint_insert_begin_"
+                    replacement="androidx-core-ktx-v1120 = { module = &quot;androidx.core:core-ktx&quot;, version.ref = &quot;coreKtxVersion&quot; }&#xA;"
+                    priority="0">
+                    <range
+                        file="../gradle/libs.versions.toml"
+                        startOffset="1240"
+                        endOffset="1240"/>
+                </fix-replace>
+                <fix-replace
+                    description="Replace with libs.androidx.core.ktx.v1120"
+                    robot="true"
+                    independent="true"
+                    replacement="libs.androidx.core.ktx.v1120"
+                    priority="0">
+                    <range
+                        file="${:opencv*projectDir}/build.gradle.kts"
+                        startOffset="827"
+                        endOffset="858"/>
+                </fix-replace>
+            </fix-composite>
+            <fix-replace
+                description="Replace with existing version catalog reference `androidx-core-ktx` (version 1.10.1)"
+                replacement="libs.androidx.core.ktx"
+                priority="0">
+                <range
+                    file="${:opencv*projectDir}/build.gradle.kts"
+                    startOffset="827"
+                    endOffset="858"/>
+            </fix-replace>
+        </fix-alternatives>
+        <location
+            file="${:opencv*projectDir}/build.gradle.kts"
+            line="38"
+            column="20"
+            startOffset="827"
+            endLine="38"
+            endColumn="51"
+            endOffset="858"/>
+    </incident>
+
+    <incident
+        id="UseTomlInstead"
+        severity="warning"
+        message="Use version catalog instead">
+        <fix-composite
+            description="Replace with new library catalog declaration for androidx-appcompat"
+            robot="true">
+            <fix-replace
+                description="Replace with appcompat = &quot;1.6.1&quot;..."
+                robot="true"
+                oldString="_lint_insert_begin_"
+                replacement="appcompat = &quot;1.6.1&quot;&#xA;"
+                priority="0">
+                <range
+                    file="../gradle/libs.versions.toml"
+                    startOffset="51"
+                    endOffset="51"/>
+            </fix-replace>
+            <fix-replace
+                description="Replace with androidx-appcompat = { module = &quot;androidx.appcompat:appcompat&quot;, version.ref = &quot;appcompat&quot; }..."
+                robot="true"
+                oldString="_lint_insert_begin_"
+                replacement="androidx-appcompat = { module = &quot;androidx.appcompat:appcompat&quot;, version.ref = &quot;appcompat&quot; }&#xA;"
+                priority="0">
+                <range
+                    file="../gradle/libs.versions.toml"
+                    startOffset="1147"
+                    endOffset="1147"/>
+            </fix-replace>
+            <fix-replace
+                description="Replace with libs.androidx.appcompat"
+                robot="true"
+                replacement="libs.androidx.appcompat"
+                priority="0">
+                <range
+                    file="${:opencv*projectDir}/build.gradle.kts"
+                    startOffset="879"
+                    endOffset="915"/>
+            </fix-replace>
+        </fix-composite>
+        <location
+            file="${:opencv*projectDir}/build.gradle.kts"
+            line="39"
+            column="20"
+            startOffset="879"
+            endLine="39"
+            endColumn="56"
+            endOffset="915"/>
+    </incident>
+
+</incidents>

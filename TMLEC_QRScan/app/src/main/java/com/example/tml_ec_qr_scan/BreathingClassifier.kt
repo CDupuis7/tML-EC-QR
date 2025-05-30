@@ -506,16 +506,16 @@ class BreathingClassifier(private val context: Context) {
                     mapOf(
                             "BRADYPNEA_THRESHOLD" to 10f,
                             "TACHYPNEA_THRESHOLD" to 24f,
-                            "IRREGULARITY_THRESHOLD" to 0.5f,
-                            "AMPLITUDE_VARIATION_THRESHOLD" to 40f,
-                            "VELOCITY_THRESHOLD" to 8f
+                            "IRREGULARITY_THRESHOLD" to 0.6f,
+                            "AMPLITUDE_VARIATION_THRESHOLD" to 60f,
+                            "VELOCITY_THRESHOLD" to 12f
                     )
 
             val BRADYPNEA_THRESHOLD = thresholds["BRADYPNEA_THRESHOLD"] ?: 10f
             val TACHYPNEA_THRESHOLD = thresholds["TACHYPNEA_THRESHOLD"] ?: 24f
-            val IRREGULARITY_THRESHOLD = thresholds["IRREGULARITY_THRESHOLD"] ?: 0.5f
-            val AMPLITUDE_VARIATION_THRESHOLD = thresholds["AMPLITUDE_VARIATION_THRESHOLD"] ?: 40f
-            val VELOCITY_THRESHOLD = thresholds["VELOCITY_THRESHOLD"] ?: 8f
+            val IRREGULARITY_THRESHOLD = thresholds["IRREGULARITY_THRESHOLD"] ?: 0.6f
+            val AMPLITUDE_VARIATION_THRESHOLD = thresholds["AMPLITUDE_VARIATION_THRESHOLD"] ?: 60f
+            val VELOCITY_THRESHOLD = thresholds["VELOCITY_THRESHOLD"] ?: 12f
 
             // Identify conditions based on thresholds (for detailed diagnostics)
             // Check breathing rate condition
@@ -712,6 +712,7 @@ class BreathingClassifier(private val context: Context) {
             if (detectedConditions.contains("HIGH_AMPLITUDE_VARIATION"))
                     secondaryFactors.add("HIGH_AMPLITUDE_VARIATION")
             if (detectedConditions.contains("HIGH_VELOCITY")) secondaryFactors.add("HIGH_VELOCITY")
+            if (detectedConditions.contains("HIGH_IRREGULARITY")) secondaryFactors.add("HIGH_IRREGULARITY")
 
             // Log all the factors for transparency
             Log.d("BreathingClassifier", "==== DECISION FACTORS ====")
@@ -872,16 +873,16 @@ class BreathingClassifier(private val context: Context) {
                         ?: mapOf(
                                 "BRADYPNEA_THRESHOLD" to 10f,
                                 "TACHYPNEA_THRESHOLD" to 24f,
-                                "IRREGULARITY_THRESHOLD" to 0.5f,
-                                "AMPLITUDE_VARIATION_THRESHOLD" to 40f,
-                                "VELOCITY_THRESHOLD" to 8f
+                                "IRREGULARITY_THRESHOLD" to 0.6f,
+                                "AMPLITUDE_VARIATION_THRESHOLD" to 60f,
+                                "VELOCITY_THRESHOLD" to 12f
                         )
 
         val BRADYPNEA_THRESHOLD = thresholds["BRADYPNEA_THRESHOLD"] ?: 10f
         val TACHYPNEA_THRESHOLD = thresholds["TACHYPNEA_THRESHOLD"] ?: 24f
-        val IRREGULARITY_THRESHOLD = thresholds["IRREGULARITY_THRESHOLD"] ?: 0.5f
-        val AMPLITUDE_VARIATION_THRESHOLD = thresholds["AMPLITUDE_VARIATION_THRESHOLD"] ?: 40f
-        val VELOCITY_THRESHOLD = thresholds["VELOCITY_THRESHOLD"] ?: 8f
+        val IRREGULARITY_THRESHOLD = thresholds["IRREGULARITY_THRESHOLD"] ?: 0.6f
+        val AMPLITUDE_VARIATION_THRESHOLD = thresholds["AMPLITUDE_VARIATION_THRESHOLD"] ?: 60f
+        val VELOCITY_THRESHOLD = thresholds["VELOCITY_THRESHOLD"] ?: 12f
 
         if (classification == "Abnormal") {
             diagnosticInfo.append("Abnormal breathing detected:\n")
