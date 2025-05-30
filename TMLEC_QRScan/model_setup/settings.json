@@ -1,4 +1,0 @@
-{
-    "python.defaultInterpreterPath": "C:/tf_proj/venv/Scripts/python.exe",
-    "python.analysis.extraPaths": ["C:/tf_proj/venv/Lib/site-packages"]
-}
