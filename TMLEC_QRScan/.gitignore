@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+TMLEC_QRScan/model_setup/
+TMLEC_QRScan/temp/
+TMLEC_QRScan/opencv/
+*.zip
+*.dll
+*.lib
