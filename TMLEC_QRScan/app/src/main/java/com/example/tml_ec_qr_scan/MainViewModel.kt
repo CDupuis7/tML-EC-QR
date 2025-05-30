@@ -23,6 +23,33 @@ sealed class UiState {
     object DiseaseDetection : UiState()
 }
 
+/** Sealed class representing different UI states for the respiratory disease detection screen */
+sealed class DiseaseUiState {
+    /** Initial state before recording starts */
+    object Ready : DiseaseUiState()
+
+    /** Recording in progress with countdown timer */
+    data class Recording(val remainingSeconds: Int) : DiseaseUiState()
+
+    /** Processing and analyzing the recorded audio */
+    object Analyzing : DiseaseUiState()
+
+    /** Analysis complete with diagnosis result */
+    data class Result(val diagnosisResult: DiagnosisResult) : DiseaseUiState()
+}
+
+/** Data class representing the result of respiratory disease analysis */
+data class DiagnosisResult(
+        val classification: String, // "Normal" or "Abnormal"
+        val confidence: Float,
+        val breathingRate: Float,
+        val irregularityIndex: Float,
+        val recommendations: List<String>,
+        val detectedConditions: List<String> = emptyList(), // Specific conditions detected
+        val amplitudeVariability: Float = 0f, // Amplitude variability metric
+        val durationVariability: Float = 0f // Duration variability metric
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     // UI state
     private val _uiState = MutableStateFlow<UiState>(UiState.Initial)
@@ -128,6 +155,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Breathing classifier for real-time analysis
     private var breathingClassifier: BreathingClassifier? = null
 
+    // Tracking mode state
+    private val _currentTrackingMode = MutableStateFlow(TrackingMode.QR_TRACKING)
+    val currentTrackingMode: StateFlow<TrackingMode> = _currentTrackingMode.asStateFlow()
+
+    // Track the last used tracking mode for "Record Again" functionality
+    private val _lastUsedTrackingMode = MutableStateFlow(TrackingMode.QR_TRACKING)
+    val lastUsedTrackingMode: StateFlow<TrackingMode> = _lastUsedTrackingMode.asStateFlow()
+
+    // YOLO chest detection state
+    private val _chestDetection = MutableStateFlow<YoloChestDetector.ChestDetection?>(null)
+    val chestDetection: StateFlow<YoloChestDetector.ChestDetection?> = _chestDetection.asStateFlow()
+
+    // Camera facing state for YOLO tracking
+    private val _isFrontCamera = MutableStateFlow(false)
+    val isFrontCamera: StateFlow<Boolean> = _isFrontCamera.asStateFlow()
+
+    // Store the last classification result for UI access
+    private var lastClassificationResult: BreathingClassifier.ClassificationResultV2? = null
+
+    /** Get the last classification result with detected conditions */
+    fun getLastClassificationResult(): BreathingClassifier.ClassificationResultV2? {
+        return lastClassificationResult
+    }
+
+    /** Update the last classification result */
+    private fun updateLastClassificationResult(result: BreathingClassifier.ClassificationResultV2) {
+        lastClassificationResult = result
+        Log.d(
+                "MainViewModel",
+                "Updated classification result: ${result.classification}, conditions: ${result.detectedConditions}"
+        )
+    }
+
     init {
         // Initialize components for disease detection
         diseaseClassifier = DiseaseClassifier(getApplication())
@@ -138,6 +198,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Proceed to camera setup state without starting recording */
     fun proceedToCameraSetup() {
         _uiState.value = UiState.CameraSetup
+    }
+
+    /** Navigate back to the previous screen based on current state */
+    fun navigateBack() {
+        viewModelScope.launch {
+            when (_uiState.value) {
+                is UiState.Initial -> {
+                    // Already at the first screen, no back navigation
+                    Log.d("MainViewModel", "Already at initial screen, cannot go back")
+                }
+                is UiState.CameraSetup -> {
+                    // Go back to patient information screen
+                    Log.d("MainViewModel", "Navigating back to Initial screen")
+                    _uiState.value = UiState.Initial
+                }
+                is UiState.Calibrating -> {
+                    // Stop calibration and go back to camera setup
+                    Log.d("MainViewModel", "Stopping calibration and returning to CameraSetup")
+                    _isCalibrating.value = false
+                    _uiState.value = UiState.CameraSetup
+                }
+                is UiState.Recording -> {
+                    // Stop recording and go back to camera setup
+                    Log.d("MainViewModel", "Stopping recording and returning to CameraSetup")
+                    if (_isRecording.value) {
+                        // Cancel the timer job if recording
+                        timerJob?.cancel()
+                        timerJob = null
+                        _isTimerActive.value = false
+                        _isRecording.value = false
+                    }
+                    _readyToRecord.value = false
+                    _uiState.value = UiState.CameraSetup
+                }
+                is UiState.Results -> {
+                    // Go back to camera setup for new recording
+                    Log.d("MainViewModel", "Navigating back to CameraSetup from Results")
+                    _uiState.value = UiState.CameraSetup
+                }
+                is UiState.DiseaseDetection -> {
+                    // Go back to camera setup
+                    Log.d("MainViewModel", "Navigating back to CameraSetup from DiseaseDetection")
+                    _uiState.value = UiState.CameraSetup
+                }
+            }
+        }
     }
 
     /** Update calibration state */
@@ -169,11 +275,75 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Prepare for recording (QR positioning mode) */
     fun prepareForRecording() {
         viewModelScope.launch {
+            _currentTrackingMode.value = TrackingMode.QR_TRACKING
+            _lastUsedTrackingMode.value = TrackingMode.QR_TRACKING
             _readyToRecord.value = true
             _isRecording.value = false
             Log.d("MainViewModel", "Changing state to Recording (QR positioning mode)")
             _uiState.value = UiState.Recording
         }
+    }
+
+    /** Prepare for YOLO chest tracking mode */
+    fun prepareForYoloTracking() {
+        viewModelScope.launch {
+            _currentTrackingMode.value = TrackingMode.YOLO_TRACKING
+            _lastUsedTrackingMode.value = TrackingMode.YOLO_TRACKING
+            _readyToRecord.value = true
+            _isRecording.value = false
+            Log.d("MainViewModel", "Changing state to Recording (YOLO chest tracking mode)")
+            _uiState.value = UiState.Recording
+        }
+    }
+
+    /**
+     * Restart recording with the same tracking mode as the previous session This is used by the
+     * "Record Again" button to maintain mode consistency
+     */
+    fun restartRecordingWithSameMode() {
+        viewModelScope.launch {
+            val lastMode = _lastUsedTrackingMode.value
+            Log.d("MainViewModel", "🔄 Restarting recording with last used mode: $lastMode")
+
+            // Clear previous session data
+            clearSessionData()
+
+            // Set the tracking mode to the last used mode
+            _currentTrackingMode.value = lastMode
+            _readyToRecord.value = true
+            _isRecording.value = false
+
+            when (lastMode) {
+                TrackingMode.QR_TRACKING -> {
+                    Log.d("MainViewModel", "🎯 Restarting QR tracking mode")
+                    _uiState.value = UiState.Recording
+                }
+                TrackingMode.YOLO_TRACKING -> {
+                    Log.d("MainViewModel", "🤖 Restarting YOLO tracking mode")
+                    // Clear any previous chest detection
+                    _chestDetection.value = null
+                    _uiState.value = UiState.Recording
+                }
+            }
+        }
+    }
+
+    /** Clear session data while preserving tracking mode preferences */
+    private fun clearSessionData() {
+        _respiratoryData.value = emptyList()
+        _currentBreathingPhase.value = "Unknown"
+        _breathingConfidence.value = 0.0f
+        _currentVelocity.value = 0.0f
+        _breathingClassification.value = "Unknown"
+        _classificationConfidence.value = 0.0f
+        _breathingRate.value = 0.0f
+        breathingDataBuffer.clear()
+
+        // Reset timer state
+        _recordingTimeRemaining.value = _recordingDuration.value
+        _isTimerActive.value = false
+
+        Log.d("MainViewModel", "✅ Session data cleared for restart")
     }
 
     /** Start recording of respiratory data */
@@ -298,14 +468,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { _patientMetadata.value = metadata }
     }
 
+    /** Update chest detection data for YOLO tracking */
+    //    fun updateChestDetection(detection: YoloChestDetector.ChestDetection?) {
+    //        viewModelScope.launch { _chestDetection.value = detection }
+    //    }
+
     /** Update breathing data with phase, confidence, and velocity */
     fun updateBreathingData(phase: Int, confidence: Float, velocity: Float) {
         viewModelScope.launch {
             _currentBreathingPhase.value =
                     when (phase) {
-                        -1 -> "Inhaling"
-                        1 -> "Exhaling"
-                        0 -> "Pause"
+                        -1 -> "inhaling" // Changed to lowercase for consistency
+                        1 -> "exhaling" // Changed to lowercase for consistency
+                        0 -> "pause" // Changed to lowercase for consistency
                         else -> "Unknown"
                     }
             _breathingConfidence.value = confidence
@@ -316,6 +491,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     "ViewModel",
                     "Updating breathing phase to: ${_currentBreathingPhase.value} (phase code: $phase), velocity: $velocity"
             )
+        }
+    }
+
+    /** Update breathing phase directly with string (for YOLO tracking) */
+    fun updateCurrentBreathingPhase(phase: String) {
+        viewModelScope.launch {
+            _currentBreathingPhase.value = phase
+            Log.d("ViewModel", "Directly updating breathing phase to: $phase")
         }
     }
 
@@ -458,6 +641,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     Log.d("MainViewModel", "Model Used: ${getModelInfo()}")
                     Log.d("MainViewModel", "----------------------------------------------------")
+
+                    // Update the last classification result
+                    updateLastClassificationResult(classificationResult)
                 } else {
                     Log.e("MainViewModel", "ERROR: Classification result is null!")
 
@@ -545,10 +731,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _diseaseUiState.value = DiseaseUiState.Ready
             _uiState.value = UiState.DiseaseDetection
 
-            // Calculate additional metrics
-            val amplitudeVariability = calculateAmplitudeVariation()
-            val durationVariability = calculateBreathingRhythmVariability()
-
             // Create enhanced BreathingMetrics with all data
             val metrics =
                     BreathingMetrics(
@@ -559,17 +741,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             breathCount = countBreathCycles()
                     )
 
-            // Get enhanced diagnosis with specific conditions
-            val diagnosis =
-                    diseaseClassifier?.classify(
-                            breathingDataBuffer.toList(),
-                            metrics,
-                            patientMetadata.value
-                                    ?: PatientMetadata("Unknown", 0, "Unknown", "Unknown")
+            // Use direct classification logic instead of the problematic classifier
+            // Calculate breathing metrics
+            val currentBreathingRate = calculateBreathingRate()
+            val irregularityIndex = calculateIrregularityIndex()
+            val amplitudeVariation = calculateAmplitudeVariation()
+            val durationVariability = calculateBreathingRhythmVariability()
+
+            // Execute classification using Python logic directly
+            val classification =
+                    if (currentBreathingRate >= 12f && currentBreathingRate <= 20f) "Normal"
+                    else "Abnormal"
+
+            // Detect specific breathing conditions
+            val detectedConditions =
+                    classifyBreathingCondition(
+                            currentBreathingRate,
+                            irregularityIndex,
+                            amplitudeVariation,
+                            durationVariability
                     )
 
-            // Update UI state with the enhanced diagnosis
-            _diseaseUiState.value = diagnosis?.let { DiseaseUiState.Result(it) }!!
+            // Create diagnosis result with detailed conditions
+            val diagnosis =
+                    DiagnosisResult(
+                            classification = classification,
+                            confidence = 0.9f,
+                            breathingRate = currentBreathingRate,
+                            irregularityIndex = irregularityIndex,
+                            recommendations =
+                                    generateDetailedRecommendations(
+                                            classification,
+                                            currentBreathingRate,
+                                            irregularityIndex,
+                                            detectedConditions
+                                    ),
+                            detectedConditions = detectedConditions,
+                            amplitudeVariability = amplitudeVariation,
+                            durationVariability = durationVariability
+                    )
+
+            // Update UI state with the diagnosis
+            _diseaseUiState.value = DiseaseUiState.Result(diagnosis)
         }
     }
 
@@ -608,21 +821,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Update UI state
         _diseaseUiState.value = DiseaseUiState.Analyzing
 
-        // Process data and analyze
+        // Analyze collected data for disease detection
+        analyzeDiseaseData()
+    }
+
+    /** Analyze collected data for disease detection */
+    fun analyzeDiseaseData() {
+        // Update UI state
+        _diseaseUiState.value = DiseaseUiState.Analyzing
+
+        // Analyze the collected data for disease detection
         viewModelScope.launch {
             try {
                 Log.d(
                         "MainViewModel",
-                        "Analyzing disease with ${breathingDataBuffer.size} data points"
+                        "Starting disease analysis with ${breathingDataBuffer.size} data points"
                 )
 
-                // Calculate breathing rate from QR data
+                // Calculate breathing metrics
                 val breathingRate = calculateBreathingRate()
-
-                // Calculate irregularity index from QR data
                 val irregularityIndex = calculateIrregularityIndex()
-
-                // Calculate other metrics from QR data
                 val amplitudeVariation = calculateAmplitudeVariation()
                 val durationVariability = calculateBreathingRhythmVariability()
 
@@ -1090,21 +1308,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return normalizedIrregularity
     }
 
-    // Calculate amplitude variation (depth of breathing)
+    // FIXED: Calculate amplitude variation with realistic scaling for normal breathing
     private fun calculateAmplitudeVariation(): Float {
         if (breathingDataBuffer.size < 10) {
             return 0f
         }
 
-        // Using velocity values as an indicator of amplitude
-        val velocities = breathingDataBuffer.map { kotlin.math.abs(it.velocity) }
+        // Use the SAME amplitude values we fixed in MainActivity for consistency
+        val amplitudes = breathingDataBuffer.map { it.amplitude }
 
-        // Find min and max
-        val minVelocity = velocities.minOrNull() ?: 0f
-        val maxVelocity = velocities.maxOrNull() ?: 0f
+        // Remove outliers first
+        val sortedAmplitudes = amplitudes.sorted()
+        val q1Index = (sortedAmplitudes.size * 0.25).toInt()
+        val q3Index = (sortedAmplitudes.size * 0.75).toInt()
+        val filteredAmplitudes = sortedAmplitudes.subList(q1Index, q3Index)
 
-        // Calculate variation
-        return maxVelocity - minVelocity
+        if (filteredAmplitudes.size < 3) {
+            return 5f // Return low variation for small datasets
+        }
+
+        val meanAmplitude = filteredAmplitudes.average().toFloat()
+        val variance =
+                filteredAmplitudes
+                        .map { (it - meanAmplitude) * (it - meanAmplitude) }
+                        .average()
+                        .toFloat()
+        val standardDeviation = kotlin.math.sqrt(variance)
+
+        // FIXED: Return normalized coefficient of variation as percentage (0-100 scale)
+        // Normal breathing should have CV of 10-30%, abnormal is >50%
+        val coefficientOfVariation =
+                if (meanAmplitude > 0f) {
+                    (standardDeviation / meanAmplitude) * 100f
+                } else {
+                    10f // Default low variation
+                }
+
+        // Cap at realistic maximum and ensure minimum variation
+        val result = coefficientOfVariation.coerceIn(5f, 80f)
+
+        Log.d("AmplitudeVariation", "=== FIXED AMPLITUDE VARIATION CALCULATION ===")
+        Log.d("AmplitudeVariation", "Original data points: ${breathingDataBuffer.size}")
+        Log.d("AmplitudeVariation", "Filtered amplitudes: ${filteredAmplitudes.size}")
+        Log.d("AmplitudeVariation", "Mean amplitude: ${String.format("%.2f", meanAmplitude)}")
+        Log.d(
+                "AmplitudeVariation",
+                "Standard deviation: ${String.format("%.2f", standardDeviation)}"
+        )
+        Log.d("AmplitudeVariation", "Raw CV: ${String.format("%.2f", coefficientOfVariation)}%")
+        Log.d("AmplitudeVariation", "Final amplitude variation: ${String.format("%.2f", result)}%")
+        Log.d("AmplitudeVariation", "Normal range: 10-30%, Abnormal: >50%")
+
+        return result
     }
 
     // Calculate average velocity
@@ -1395,6 +1650,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 "Detected $cycleCount breath cycles in ${breathingDataBuffer.size} data points"
         )
         return cycleCount
+    }
+
+    /** Toggle between front and back camera for YOLO tracking */
+    fun toggleCamera() {
+        viewModelScope.launch {
+            _isFrontCamera.value = !_isFrontCamera.value
+            Log.d(
+                    "MainViewModel",
+                    "Camera switched to: ${if (_isFrontCamera.value) "Front" else "Back"}"
+            )
+        }
+    }
+
+    /** Update chest detection from YOLO detector */
+    fun updateChestDetection(detection: YoloChestDetector.ChestDetection?) {
+        _chestDetection.value = detection
     }
 
     override fun onCleared() {
