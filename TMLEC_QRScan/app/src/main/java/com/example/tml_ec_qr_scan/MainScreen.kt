@@ -4,9 +4,12 @@ package com.example.tml_ec_qr_scan
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,6 +25,17 @@ import kotlinx.coroutines.delay
 
 // CompositionLocal to provide ViewModel access in nested composables
 val LocalViewModel = staticCompositionLocalOf<MainViewModel> { error("No ViewModel provided") }
+
+@Composable
+fun BackButton(onBackClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+        IconButton(onClick = onBackClick, enabled = enabled, modifier = modifier) {
+                Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = if (enabled) MaterialTheme.colorScheme.primary else Color.Gray
+                )
+        }
+}
 
 @Composable
 fun MainScreen(
@@ -69,8 +83,10 @@ fun MainScreen(
                                 modifier =
                                         Modifier.fillMaxWidth()
                                                 .padding(
-                                                        bottom = 24.dp
-                                                ) // Fixed bottom padding for navigation bar
+                                                        bottom = 32.dp // FIXED: Increased bottom
+                                                        // padding to ensure content
+                                                        // visibility
+                                                        ) // Fixed bottom padding for navigation bar
                         ) {
                                 when (uiState) {
                                         is UiState.Initial -> {
@@ -83,6 +99,8 @@ fun MainScreen(
                                                         },
                                                         onProceedToCameraSetup = {
                                                                 viewModel.proceedToCameraSetup()
+                                                        },
+                                                        onBackClick = { /* No back navigation from initial screen */
                                                         }
                                                 )
                                         }
@@ -98,7 +116,11 @@ fun MainScreen(
                                                         onToggleTrainingMode = onToggleTrainingMode,
                                                         onStartDiseaseDetection = {
                                                                 viewModel.startDiseaseDetection()
-                                                        }
+                                                        },
+                                                        onStartYoloTracking = {
+                                                                viewModel.prepareForYoloTracking()
+                                                        },
+                                                        onBackClick = { viewModel.navigateBack() }
                                                 )
                                         }
                                         is UiState.Calibrating -> {
@@ -106,7 +128,8 @@ fun MainScreen(
                                                         patientMetadata = patientMetadata,
                                                         onForceComplete = {
                                                                 viewModel.forceCompleteCalibration()
-                                                        }
+                                                        },
+                                                        onBackClick = { viewModel.navigateBack() }
                                                 )
                                         }
                                         is UiState.Recording -> {
@@ -124,7 +147,8 @@ fun MainScreen(
                                                         onStopRecording = onStopRecording,
                                                         onForceBreathingUpdate =
                                                                 onForceBreathingUpdate,
-                                                        onNewPatient = onNewPatient
+                                                        onNewPatient = onNewPatient,
+                                                        onBackClick = { viewModel.navigateBack() }
                                                 )
                                         }
                                         is UiState.Results -> {
@@ -132,14 +156,16 @@ fun MainScreen(
                                                         respiratoryData = respiratoryData,
                                                         patientMetadata = patientMetadata,
                                                         onStartRecording = {
-                                                                viewModel.prepareForRecording()
+                                                                viewModel
+                                                                        .restartRecordingWithSameMode()
                                                         },
                                                         onSaveData = onSaveData,
                                                         onNewPatient = onNewPatient,
                                                         onSaveGraph = onSaveGraph,
                                                         onReturnToCameraSetup = {
                                                                 viewModel.proceedToCameraSetup()
-                                                        }
+                                                        },
+                                                        onBackClick = { viewModel.navigateBack() }
                                                 )
                                         }
                                         is UiState.DiseaseDetection -> {
@@ -147,7 +173,8 @@ fun MainScreen(
                                                         viewModel = viewModel,
                                                         onBackToMain = {
                                                                 viewModel.proceedToCameraSetup()
-                                                        }
+                                                        },
+                                                        onBackClick = { viewModel.navigateBack() }
                                                 )
                                         }
                                 }
@@ -161,7 +188,8 @@ fun MainScreen(
 fun InitialScreen(
         patientMetadata: PatientMetadata?,
         onUpdatePatientMetadata: (PatientMetadata) -> Unit,
-        onProceedToCameraSetup: () -> Unit
+        onProceedToCameraSetup: () -> Unit,
+        onBackClick: () -> Unit
 ) {
         var patientId by remember { mutableStateOf(patientMetadata?.id ?: "") }
         var age by remember { mutableStateOf(patientMetadata?.age?.toString() ?: "") }
@@ -177,18 +205,138 @@ fun InitialScreen(
         var genderExpanded by remember { mutableStateOf(false) }
         var healthConditionExpanded by remember { mutableStateOf(false) }
 
+        // Get context for NFC operations
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val nfcManager = remember { NFCManager(context) }
+
+        // Update fields when patientMetadata changes (e.g., from NFC)
+        LaunchedEffect(patientMetadata) {
+                patientMetadata?.let { metadata ->
+                        patientId = metadata.id
+                        age = if (metadata.age > 0) metadata.age.toString() else ""
+                        gender = metadata.gender
+                        healthCondition = metadata.healthStatus
+                }
+        }
+
+        // FIXED: Added scrollable column with proper spacing
         Column(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
+                modifier =
+                        Modifier.fillMaxSize()
+                                .verticalScroll(
+                                        rememberScrollState()
+                                ) // ADDED: Scrolling capability
+                                .padding(16.dp)
+                                .padding(top = 8.dp), // REDUCED: Minimal top padding
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement =
+                        Arrangement.spacedBy(12.dp) // REDUCED: Smaller spacing between elements
         ) {
+
+                // FIXED: App title with reduced spacing
                 Text(
-                        text = "Patient Information",
+                        text = "RespirAPPtion",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color(0xFF2196F3)
+                        color = Color(0xFF2196F3),
+
+                        modifier =
+                                Modifier.padding(
+                                        top = 18.dp,
+
+                                )
+                )
+                Text(
+                        text = "(A Respiratory Health Monitoring App)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF9C27B0),
+                        modifier =
+                        Modifier.padding(
+
+                                bottom = 4.dp
+                        ) // REDUCED: Much smaller padding
                 )
 
-                Spacer(modifier = Modifier.height(16.dp))
+                // FIXED: Patient info title with minimal spacing
+                Text(
+                        text = "Patient Information",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Color(0xFF4CAF50),
+                        modifier =
+                                Modifier.padding(bottom = 8.dp) // REDUCED: Smaller bottom padding
+                )
+
+                // NFC Status Card - made more compact
+                Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors =
+                                CardDefaults.cardColors(
+                                        containerColor =
+                                                when {
+                                                        !nfcManager.isNFCAvailable() ->
+                                                                Color(0xFFFFEBEE) // Light red
+                                                        !nfcManager.isNFCEnabled() ->
+                                                                Color(0xFFFFF3E0) // Light orange
+                                                        else -> Color(0xFFE8F5E9) // Light green
+                                                }
+                                )
+                ) {
+                        Column(
+                                modifier =
+                                        Modifier.padding(
+                                                12.dp
+                                        ), // REDUCED: Smaller internal padding
+                                horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                                Text(
+                                        text = "📱 NFC Quick Fill",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                )
+
+                                Spacer(modifier = Modifier.height(4.dp)) // REDUCED: Smaller spacer
+
+                                Text(
+                                        text = nfcManager.getNFCStatusMessage(),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color =
+                                                when {
+                                                        !nfcManager.isNFCAvailable() ->
+                                                                Color(0xFFD32F2F) // Red
+                                                        !nfcManager.isNFCEnabled() ->
+                                                                Color(0xFFF57C00) // Orange
+                                                        else -> Color(0xFF388E3C) // Green
+                                                }
+                                )
+
+                                if (nfcManager.isNFCAvailable() && nfcManager.isNFCEnabled()) {
+                                        Spacer(
+                                                modifier = Modifier.height(4.dp)
+                                        ) // REDUCED: Smaller spacer
+                                        Text(
+                                                text =
+                                                        "🏷️ Tap an NFC tag with patient data to auto-fill the form",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF388E3C),
+                                                textAlign =
+                                                        androidx.compose.ui.text.style.TextAlign
+                                                                .Center
+                                        )
+                                } else if (!nfcManager.isNFCEnabled() && nfcManager.isNFCAvailable()
+                                ) {
+                                        Spacer(
+                                                modifier = Modifier.height(6.dp)
+                                        ) // REDUCED: Smaller spacer
+                                        Button(
+                                                onClick = { nfcManager.showNFCSettings() },
+                                                colors =
+                                                        ButtonDefaults.buttonColors(
+                                                                containerColor = Color(0xFFF57C00)
+                                                        ),
+                                                modifier = Modifier.fillMaxWidth()
+                                        ) { Text("Enable NFC") }
+                                }
+                        }
+                }
 
                 OutlinedTextField(
                         value = patientId,
@@ -290,7 +438,51 @@ fun InitialScreen(
                         }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                // FIXED: Reduced spacing before buttons
+                Spacer(modifier = Modifier.height(8.dp)) // REDUCED: Much smaller spacer
+
+                // Write to NFC button (if form is filled and NFC is available)
+                if (nfcManager.isNFCAvailable() &&
+                                nfcManager.isNFCEnabled() &&
+                                patientId.isNotBlank() &&
+                                age.isNotBlank() &&
+                                gender.isNotBlank() &&
+                                healthCondition.isNotBlank()
+                ) {
+
+                        Button(
+                                onClick = {
+                                        val numAge = age.toIntOrNull() ?: 0
+                                        val metadata =
+                                                PatientMetadata(
+                                                        id = patientId,
+                                                        age = numAge,
+                                                        gender = gender,
+                                                        healthStatus = healthCondition
+                                                )
+
+                                        // Launch NFC write activity with current data
+                                        val intent =
+                                                NFCWriteActivity.createIntent(
+                                                        context as
+                                                                androidx.activity.ComponentActivity,
+                                                        metadata
+                                                )
+                                        context.startActivity(intent)
+                                },
+                                modifier =
+                                        Modifier.fillMaxWidth()
+                                                .height(48.dp), // REDUCED: Smaller button height
+                                colors =
+                                        ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF673AB7) // Purple
+                                        )
+                        ) { Text("📝 Write to NFC Tag") }
+
+                        Spacer(
+                                modifier = Modifier.height(6.dp)
+                        ) // REDUCED: Smaller spacer between buttons
+                }
 
                 Button(
                         onClick = {
@@ -307,13 +499,18 @@ fun InitialScreen(
                                 onProceedToCameraSetup()
                         },
                         enabled = patientId.isNotBlank() && age.isNotBlank() && gender.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        modifier =
+                                Modifier.fillMaxWidth()
+                                        .height(48.dp), // REDUCED: Smaller button height
                         colors =
                                 ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFF2196F3),
                                         disabledContainerColor = Color(0xFFBDBDBD)
                                 )
                 ) { Text("Proceed to Camera Setup") }
+
+                // ADDED: Bottom padding to ensure content is not cut off
+                Spacer(modifier = Modifier.height(16.dp))
         }
 }
 
@@ -325,20 +522,34 @@ fun CameraSetupScreen(
         onStartCalibration: () -> Unit,
         onNewPatient: () -> Unit,
         onToggleTrainingMode: () -> Unit,
-        onStartDiseaseDetection: () -> Unit = {}
+        onStartDiseaseDetection: () -> Unit = {},
+        onStartYoloTracking: () -> Unit = {},
+        onBackClick: () -> Unit
 ) {
         // Get camera started state from ViewModel
         val isCameraStarted by viewModel.isCameraStarted.collectAsState()
 
         Column(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
+                modifier =
+                        Modifier.fillMaxSize()
+                                .padding(horizontal = 16.dp)
+                                .padding(top = 48.dp, bottom = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+                // Back button at the top
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        BackButton(
+                                onBackClick = onBackClick,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                }
+
                 Text(
                         text = "QR Respiratory Tracking",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 15.dp)
                 )
 
                 // Display patient info
@@ -387,13 +598,6 @@ fun CameraSetupScreen(
 
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                // Camera explanation
-                                Text(
-                                        "• Start Camera: Initialize the camera to position the QR code",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(vertical = 2.dp)
-                                )
-
                                 // Calibration explanation
                                 Text(
                                         "• Start Calibration: Calibrates the QR tracking system to optimize detection",
@@ -403,7 +607,14 @@ fun CameraSetupScreen(
 
                                 // QR Tracking explanation
                                 Text(
-                                        "• Start QR Tracking: Track chest movement to record respiratory data and classify breathing patterns (normal vs. abnormal)",
+                                        "• Start QR Tracking: Track chest movement using QR codes to record respiratory data and classify breathing patterns",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.padding(vertical = 2.dp)
+                                )
+
+                                // YOLO Tracking explanation
+                                Text(
+                                        "• Start YOLO Tracking: Track chest movement using AI person detection (no QR codes needed)",
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier.padding(vertical = 2.dp)
                                 )
@@ -413,11 +624,13 @@ fun CameraSetupScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Add Start Camera button
-                Button(
-                        onClick = { viewModel.startCamera() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
-                ) { Text(if (isCameraStarted) "Camera Started" else "Start Camera") }
+                //                Button(
+                //                        onClick = { viewModel.startCamera() },
+                //                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                //                        colors = ButtonDefaults.buttonColors(containerColor =
+                // Color(0xFF2196F3))
+                //                ) { Text(if (isCameraStarted) "Camera Started" else "Start
+                // Camera") }
 
                 // Buttons
                 Button(
@@ -433,6 +646,12 @@ fun CameraSetupScreen(
                 ) { Text("Start QR Tracking") }
 
                 Button(
+                        onClick = { onStartYoloTracking() },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
+                ) { Text("Start YOLO Tracking") }
+
+                Button(
                         onClick = { onNewPatient() },
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                         colors =
@@ -442,22 +661,27 @@ fun CameraSetupScreen(
                 ) { Text("New Patient") }
 
                 // Training mode toggle
-                Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                ) {
-                        Text("Training Data Mode")
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Switch(
-                                checked = viewModel.isTrainingMode.collectAsState().value,
-                                onCheckedChange = { onToggleTrainingMode() }
-                        )
-                }
+                //                Row(
+                //                        verticalAlignment = Alignment.CenterVertically,
+                //                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                //                ) {
+                //                        Text("Training Data Mode")
+                //                        Spacer(modifier = Modifier.width(8.dp))
+                //                        Switch(
+                //                                checked =
+                // viewModel.isTrainingMode.collectAsState().value,
+                //                                onCheckedChange = { onToggleTrainingMode() }
+                //                        )
+                //                }
         }
 }
 
 @Composable
-fun CalibratingScreen(patientMetadata: PatientMetadata?, onForceComplete: () -> Unit) {
+fun CalibratingScreen(
+        patientMetadata: PatientMetadata?,
+        onForceComplete: () -> Unit,
+        onBackClick: () -> Unit
+) {
         var elapsedTime by remember { mutableStateOf(0L) }
         var showCompleteButton by remember { mutableStateOf(false) }
 
@@ -481,6 +705,14 @@ fun CalibratingScreen(patientMetadata: PatientMetadata?, onForceComplete: () -> 
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom
         ) {
+                // Back button at the top
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        BackButton(
+                                onBackClick = onBackClick,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                }
+
                 Text(
                         text = "Calibration in Progress",
                         style = MaterialTheme.typography.headlineMedium,
@@ -488,6 +720,26 @@ fun CalibratingScreen(patientMetadata: PatientMetadata?, onForceComplete: () -> 
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
+
+                // Camera toggle button for calibration
+                val viewModel = LocalViewModel.current
+                val isFrontCamera by viewModel.isFrontCamera.collectAsState()
+
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                ) {
+                        Button(
+                                onClick = { viewModel.toggleCamera() },
+                                modifier = Modifier.padding(8.dp),
+                                colors =
+                                        ButtonDefaults.buttonColors(
+                                                containerColor = Color(0xFF607D8B)
+                                        )
+                        ) { Text("📷   ${if (isFrontCamera) "Back" else "Front"} Camera") }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp)) // Increased spacing for more camera room
 
                 if (patientMetadata != null) {
                         Text(
@@ -550,7 +802,8 @@ fun RecordingScreen(
         onStartRecording: () -> Unit,
         onStopRecording: () -> Unit,
         onForceBreathingUpdate: () -> Unit,
-        onNewPatient: () -> Unit
+        onNewPatient: () -> Unit,
+        onBackClick: () -> Unit
 ) {
         // Access the ViewModel from the CompositionLocal
         val viewModel = LocalViewModel.current
@@ -563,6 +816,14 @@ fun RecordingScreen(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
+                // Back button at the top
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        BackButton(
+                                onBackClick = onBackClick,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                }
+
                 // Display patient info
                 patientMetadata?.let {
                         Text(
@@ -577,16 +838,93 @@ fun RecordingScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // QR positioning instructions
+                // Camera toggle button for tracking modes
+                val trackingMode = viewModel.currentTrackingMode.collectAsState().value
+                val isFrontCamera by viewModel.isFrontCamera.collectAsState()
+
+                if (trackingMode == TrackingMode.QR_TRACKING ||
+                                trackingMode == TrackingMode.YOLO_TRACKING
+                ) {
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center
+                        ) {
+                                Button(
+                                        onClick = { viewModel.toggleCamera() },
+                                        modifier = Modifier.padding(8.dp),
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor = Color(0xFF607D8B)
+                                                )
+                                ) { Text("📷 ${if (isFrontCamera) "Back" else "Front"} Camera") }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp)) // Added more spacing below button
+                }
+
+                // Tracking mode instructions
                 if (!isRecording && readyToRecord) {
-                        Text(
-                                text = "Position QR Code in the frame",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Color(0xFF2196F3)
-                        )
+                        // Show current tracking mode
+                        Card(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                colors =
+                                        CardDefaults.cardColors(
+                                                containerColor =
+                                                        when (trackingMode) {
+                                                                TrackingMode.QR_TRACKING ->
+                                                                        Color(
+                                                                                0xFFE3F2FD
+                                                                        ) // Light blue
+                                                                TrackingMode.YOLO_TRACKING ->
+                                                                        Color(
+                                                                                0xFFF3E5F5
+                                                                        ) // Light purple
+                                                        }
+                                        )
+                        ) {
+                                Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                        Text(
+                                                text =
+                                                        when (trackingMode) {
+                                                                TrackingMode.QR_TRACKING ->
+                                                                        "🎯 QR Code Tracking Mode"
+                                                                TrackingMode.YOLO_TRACKING ->
+                                                                        "🤖 YOLO Chest Tracking Mode"
+                                                        },
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color =
+                                                        when (trackingMode) {
+                                                                TrackingMode.QR_TRACKING ->
+                                                                        Color(0xFF1976D2)
+                                                                TrackingMode.YOLO_TRACKING ->
+                                                                        Color(0xFF7B1FA2)
+                                                        }
+                                        )
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Text(
+                                                text =
+                                                        when (trackingMode) {
+                                                                TrackingMode.QR_TRACKING ->
+                                                                        "Position QR code on your chest and align it in the frame"
+                                                                TrackingMode.YOLO_TRACKING ->
+                                                                        "Position camera towards your chest area for AI detection"
+                                                        },
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                textAlign =
+                                                        androidx.compose.ui.text.style.TextAlign
+                                                                .Center
+                                        )
+                                }
+                        }
 
                         // Start Recording button
-                        Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         Button(
                                 onClick = onStartRecording,
                                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -674,12 +1012,12 @@ fun RecordingScreen(
 
                 Button(
                         onClick = onNewPatient,
-                        modifier =
-                                Modifier.fillMaxWidth()
-                                        .height(48.dp)
-                                        .padding(top = 8.dp, bottom = 16.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
-                ) { Text(text = "New Patient") }
+                ) { Text("New Patient") }
+
+                // FIXED: Added bottom spacer to ensure button is fully visible
+                Spacer(modifier = Modifier.height(32.dp))
         }
 }
 
@@ -691,7 +1029,8 @@ fun ResultsScreen(
         onSaveData: () -> Unit,
         onNewPatient: () -> Unit,
         onSaveGraph: () -> Unit,
-        onReturnToCameraSetup: () -> Unit
+        onReturnToCameraSetup: () -> Unit,
+        onBackClick: () -> Unit
 ) {
         val viewModel = LocalViewModel.current
         val breathingRate by viewModel.breathingRate.collectAsState()
@@ -704,31 +1043,46 @@ fun ResultsScreen(
         // State for graph dialog
         var showGraphDialog by remember { mutableStateOf(false) }
 
-        // Extract detected conditions and other assessment details
+        // Get detected conditions from the breathing classifier result if available
         val detectedConditions =
                 remember(breathingRate, breathingClassification) {
-                        mutableListOf<String>().apply {
-                                // Check for tachypnea (fast breathing)
-                                if (breathingRate > 24f) {
-                                        add("TACHYPNEA (fast breathing)")
-                                }
-                                // Check for bradypnea (slow breathing)
-                                else if (breathingRate < 10f) {
-                                        add("BRADYPNEA (slow breathing)")
-                                }
+                        // Try to get conditions from the actual classification result
+                        val classificationResult = viewModel.getLastClassificationResult()
+                        if (classificationResult != null &&
+                                        classificationResult.detectedConditions.isNotEmpty()
+                        ) {
+                                // Use the actual detected conditions from the classifier
+                                classificationResult.detectedConditions
+                        } else {
+                                // Fallback to manual detection if no classification result
+                                // available
+                                mutableListOf<String>().apply {
+                                        // Check for tachypnea (fast breathing)
+                                        if (breathingRate > 24f) {
+                                                add("TACHYPNEA (fast breathing)")
+                                        }
+                                        // Check for bradypnea (slow breathing)
+                                        else if (breathingRate < 10f) {
+                                                add("BRADYPNEA (slow breathing)")
+                                        }
 
-                                // Add other detected conditions from assessed data
-                                // This needs to match conditions detected in BreathingClassifier.kt
-                                val irregularityIndex = respiratoryData.calculateIrregularityIndex()
-                                val amplitudeVariation =
-                                        respiratoryData.calculateAmplitudeVariation()
+                                        // Add other detected conditions from assessed data
+                                        val irregularityIndex =
+                                                respiratoryData.calculateIrregularityIndex()
+                                        val amplitudeVariation =
+                                                respiratoryData.calculateAmplitudeVariation()
 
-                                if (irregularityIndex > 0.4f) {
-                                        add("HIGH IRREGULARITY (breathing rhythm variability)")
-                                }
+                                        if (irregularityIndex > 0.6f) { // Updated threshold
+                                                add(
+                                                        "HIGH IRREGULARITY (breathing rhythm variability)"
+                                                )
+                                        }
 
-                                if (amplitudeVariation > 40f) {
-                                        add("HIGH AMPLITUDE VARIATION (inconsistent breath depth)")
+                                        if (amplitudeVariation > 60f) { // Updated threshold
+                                                add(
+                                                        "HIGH AMPLITUDE VARIATION (inconsistent breath depth)"
+                                                )
+                                        }
                                 }
                         }
                 }
@@ -779,14 +1133,24 @@ fun ResultsScreen(
                 }
 
         Column(
-                modifier = Modifier.fillMaxSize().padding(16.dp),
+                modifier =
+                        Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
+                // Back button at the top
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                        BackButton(
+                                onBackClick = onBackClick,
+                                modifier = Modifier.padding(top = 13.dp)
+                        )
+                }
+
                 Text(
                         text = "Breathing Assessment Results",
                         style = MaterialTheme.typography.headlineMedium,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                        modifier =
+                                Modifier.fillMaxSize().padding(bottom = 16.dp).padding(top = 20.dp)
                 )
 
                 // Display patient information
@@ -1047,6 +1411,9 @@ fun ResultsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
                 ) { Text("New Patient") }
+
+                // FIXED: Added bottom spacer to ensure button is fully visible
+                Spacer(modifier = Modifier.height(32.dp))
         }
 
         // Recommendations Dialog
