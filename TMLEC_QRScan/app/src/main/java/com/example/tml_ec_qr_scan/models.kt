@@ -51,11 +51,13 @@ data class CalibrationThresholds(
         var pauseThresholdHigh: Float // Upper bound for pause detection
 )
 
+
 /** Tracking mode enum to distinguish between QR and YOLO tracking */
 enum class TrackingMode {
         QR_TRACKING, // BoofCV-based QR code tracking
         YOLO_TRACKING // YOLO-based chest region tracking
 }
+
 
 fun Offset.distanceTo(other: Offset): Float {
         return sqrt((this.x - other.x).pow(2) + (this.y - other.y).pow(2))

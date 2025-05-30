@@ -36,22 +36,28 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
 import kotlin.math.abs
 
+
 // Improved responsive smoothing function for breathing data
 fun smoothRespiratoryData(
         data: List<RespiratoryDataPoint>,
         windowSize: Int = 3 // Reduced window size for more responsiveness
+
 ): List<RespiratoryDataPoint> {
         if (data.size <= windowSize) return data
 
         val smoothedData = mutableListOf<RespiratoryDataPoint>()
 
+
         // Using a lighter moving average that preserves breathing patterns
+
         for (i in data.indices) {
                 val start = maxOf(0, i - windowSize / 2)
                 val end = minOf(data.size - 1, i + windowSize / 2)
                 val windowPoints = data.subList(start, end + 1)
 
+
                 // Simple average without aggressive filtering
+
                 val avgVelocity = windowPoints.map { it.velocity }.average().toFloat()
 
                 // Create a new data point with the smoothed velocity but keeping all other original
@@ -100,8 +106,10 @@ fun RespirationChart(
         // State for canvas size
         var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
 
+
         // Use raw respiratory data without smoothing for authentic breathing patterns
         val chartData = respiratoryData // No smoothing applied
+
 
         // Define colors for different breathing phases
         val inhaleColor = Color(0xFF81C784) // Green for inhaling
@@ -268,10 +276,12 @@ fun RespirationChart(
                                                 Modifier.fillMaxSize().horizontalScroll(scrollState)
                                 ) {
                                         val recentData =
+
                                                 if (chartData.size > maxPoints) {
                                                         chartData.takeLast(maxPoints)
                                                 } else {
                                                         chartData
+
                                                 }
 
                                         // Calculate the maximum width we need - at least
@@ -315,7 +325,9 @@ fun RespirationChart(
 
                                                 // Find min/max for scaling
                                                 val maxVelocity =
+
                                                         chartData
+
                                                                 .maxOfOrNull { abs(it.velocity) }
                                                                 ?.coerceAtLeast(10f)
                                                                 ?: 10f
