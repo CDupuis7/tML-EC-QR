@@ -124,7 +124,18 @@ class MainActivity : ComponentActivity() {
                 PreviewView(this).apply {
                     implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                     scaleType = PreviewView.ScaleType.FILL_CENTER
+                    Log.d(
+                            "MainActivity",
+                            "🎥 PreviewView initialized with PERFORMANCE mode and FILL_CENTER scale"
+                    )
                 }
+
+        Log.d("MainActivity", "🎥 PreviewView details: $previewView")
+        Log.d(
+                "MainActivity",
+                "🎥 PreviewView implementation mode: ${previewView.implementationMode}"
+        )
+        Log.d("MainActivity", "🎥 PreviewView scale type: ${previewView.scaleType}")
 
         breathingClassifier = BreathingClassifier(this)
 
@@ -191,29 +202,116 @@ class MainActivity : ComponentActivity() {
                     // Camera initialization effects
                     val uiState by viewModel.uiState.collectAsState()
                     LaunchedEffect(uiState) {
-                        if (uiState is UiState.Calibrating || uiState is UiState.Recording) {
-                            if (cameraProvider == null) {
-                                initializeCamera()
-                            } else {
-                                bindCameraUseCases()
+                        Log.d("MainActivity", "🎥 UI State changed to: $uiState")
+                        when (uiState) {
+                            is UiState.CameraSetup -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 CameraSetup state - camera not needed yet"
+                                )
+                                // Don't start camera automatically - wait for user to choose
+                                // tracking mode
+                            }
+                            is UiState.Calibrating -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 Calibrating state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
+                            }
+                            is UiState.Recording -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 Recording state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
+                            }
+                            is UiState.Initial -> {
+                                Log.d("MainActivity", "🎥 Initial state - camera not needed")
+                                // Stop camera to save resources when not needed
+                                viewModel.stopCamera()
+                            }
+                            is UiState.Results -> {
+                                Log.d("MainActivity", "🎥 Results state - camera not needed")
+                                // Stop camera to save resources when not needed
+                                viewModel.stopCamera()
+                            }
+                            is UiState.DiseaseDetection -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 DiseaseDetection state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
                             }
                         }
                     }
 
                     val isCameraStarted by viewModel.isCameraStarted.collectAsState()
                     LaunchedEffect(isCameraStarted) {
-                        if (isCameraStarted && uiState is UiState.CameraSetup) {
-                            if (cameraProvider == null) {
-                                initializeCamera()
-                            } else {
-                                bindCameraUseCases()
-                            }
+                        Log.d(
+                                "MainActivity",
+                                "🎥 Camera started state changed to: $isCameraStarted, current UI state: $uiState"
+                        )
+                        // Ensure camera is initialized when camera started state changes to true
+                        if (isCameraStarted && cameraProvider == null) {
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 Camera started but no provider, initializing..."
+                            )
+                            initializeCamera()
+                        } else if (isCameraStarted && cameraProvider != null) {
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 Camera started and provider exists, binding use cases..."
+                            )
+                            bindCameraUseCases()
                         }
                     }
 
                     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
                     LaunchedEffect(isFrontCamera) {
+                        Log.d("MainActivity", "🎥 Front camera state changed to: $isFrontCamera")
                         if (cameraProvider != null) {
+                            Log.d("MainActivity", "🎥 Rebinding camera for camera flip")
                             bindCameraUseCases()
                         }
                     }
@@ -251,8 +349,33 @@ class MainActivity : ComponentActivity() {
             rotationDegrees: Int
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Camera preview
-            AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            // Camera preview - ensure PreviewView is properly displayed
+            AndroidView(
+                    factory = { context ->
+                        Log.d(
+                                "MainActivity",
+                                "🎥 AndroidView factory called - creating/returning PreviewView"
+                        )
+                        previewView.apply {
+                            // Ensure proper scaling and implementation mode
+                            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 PreviewView configured in AndroidView factory"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { view ->
+                        Log.d("MainActivity", "🎥 AndroidView update called")
+                        // Ensure the surface provider is set
+                        if (preview != null) {
+                            preview?.setSurfaceProvider(view.surfaceProvider)
+                            Log.d("MainActivity", "🎥 Surface provider set in AndroidView update")
+                        }
+                    }
+            )
 
             // QR/YOLO overlays based on tracking mode
             val trackingMode by viewModel.currentTrackingMode.collectAsState()
@@ -980,21 +1103,29 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun initializeCamera() {
+        Log.d("MainActivity", "🎥 initializeCamera() called")
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
                         PackageManager.PERMISSION_GRANTED
         ) {
+            Log.w("MainActivity", "🎥 Camera permission not granted, requesting...")
             requestCameraPermissionIfNeeded()
             return
         }
 
+        Log.d("MainActivity", "🎥 Camera permission granted, proceeding with initialization")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener(
                 {
                     try {
+                        Log.d("MainActivity", "🎥 Camera provider future completed")
                         cameraProvider = cameraProviderFuture.get()
+                        Log.d(
+                                "MainActivity",
+                                "🎥 Camera provider obtained successfully, calling bindCameraUseCases"
+                        )
                         bindCameraUseCases()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to initialize camera", e)
+                        Log.e(TAG, "🎥 Failed to initialize camera", e)
                         Toast.makeText(
                                         this,
                                         "Failed to initialize camera: ${e.message}",
@@ -1008,16 +1139,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun bindCameraUseCases() {
+        Log.d("MainActivity", "🎥 bindCameraUseCases() called")
         val cameraProvider = cameraProvider ?: return
 
         try {
+            Log.d("MainActivity", "🎥 Unbinding all previous camera use cases")
             cameraProvider.unbindAll()
 
+            Log.d("MainActivity", "🎥 Creating preview use case")
             preview =
-                    Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    Preview.Builder().build().also { previewUseCase ->
+                        Log.d("MainActivity", "🎥 Setting surface provider for preview")
+                        previewUseCase.setSurfaceProvider(previewView.surfaceProvider)
+                        Log.d("MainActivity", "🎥 Preview surface provider set successfully")
                     }
 
+            Log.d("MainActivity", "🎥 Creating image analyzer use case")
             imageAnalyzer =
                     ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -1035,6 +1172,7 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                 }
+                                Log.d("MainActivity", "🎥 Image analyzer set")
                             }
 
             val isFrontCamera = viewModel.isFrontCamera.value
@@ -1045,9 +1183,19 @@ class MainActivity : ComponentActivity() {
                         CameraSelector.DEFAULT_BACK_CAMERA
                     }
 
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+            Log.d("MainActivity", "🎥 Using ${if (isFrontCamera) "front" else "back"} camera")
+            Log.d("MainActivity", "🎥 Binding camera to lifecycle")
+
+            val camera =
+                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+
+            Log.d("MainActivity", "🎥 Camera successfully bound to lifecycle")
+            Log.d("MainActivity", "🎥 Camera info: ${camera.cameraInfo}")
+            Log.d("MainActivity", "🎥 Preview use case: $preview")
+            Log.d("MainActivity", "🎥 PreviewView: $previewView")
+            Log.d("MainActivity", "🎥 PreviewView surface provider: ${previewView.surfaceProvider}")
         } catch (exc: Exception) {
-            Log.e(TAG, "Use case binding failed", exc)
+            Log.e(TAG, "🎥 Use case binding failed", exc)
             Toast.makeText(this, "Camera initialization failed: ${exc.message}", Toast.LENGTH_LONG)
                     .show()
         }
