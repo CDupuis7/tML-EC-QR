@@ -47,6 +47,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.OxygenSaturationRecord
+import androidx.lifecycle.lifecycleScope
 import boofcv.android.ConvertBitmap
 import boofcv.factory.fiducial.FactoryFiducial
 import boofcv.struct.image.GrayU8
@@ -60,6 +66,7 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: ExecutorService
@@ -83,6 +90,37 @@ class MainActivity : ComponentActivity() {
 
     // NFC support for patient data
     private lateinit var nfcManager: NFCManager
+
+    // Health Connect permission handling
+    private val healthConnectPermissions =
+            setOf(
+                    HealthPermission.getReadPermission(HeartRateRecord::class),
+                    HealthPermission.getReadPermission(OxygenSaturationRecord::class)
+            )
+
+    // Health Connect permission launcher
+    private val healthConnectPermissionLauncher =
+            registerForActivityResult(
+                    PermissionController.createRequestPermissionResultContract()
+            ) { granted ->
+                if (granted.containsAll(healthConnectPermissions)) {
+                    Log.d("HealthConnect", "✅ All Health Connect permissions granted")
+                    Toast.makeText(
+                                    this,
+                                    "Health Connect permissions granted! Now receiving real data from your smartwatch",
+                                    Toast.LENGTH_LONG
+                            )
+                            .show()
+                } else {
+                    Log.w("HealthConnect", "⚠️ Some Health Connect permissions were denied")
+                    Toast.makeText(
+                                    this,
+                                    "Some health permissions denied. Using simulated data as fallback.",
+                                    Toast.LENGTH_LONG
+                            )
+                            .show()
+                }
+            }
 
     // Calibration related variables
     private var isCalibrating = false
@@ -124,7 +162,18 @@ class MainActivity : ComponentActivity() {
                 PreviewView(this).apply {
                     implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                     scaleType = PreviewView.ScaleType.FILL_CENTER
+                    Log.d(
+                            "MainActivity",
+                            "🎥 PreviewView initialized with PERFORMANCE mode and FILL_CENTER scale"
+                    )
                 }
+
+        Log.d("MainActivity", "🎥 PreviewView details: $previewView")
+        Log.d(
+                "MainActivity",
+                "🎥 PreviewView implementation mode: ${previewView.implementationMode}"
+        )
+        Log.d("MainActivity", "🎥 PreviewView scale type: ${previewView.scaleType}")
 
         breathingClassifier = BreathingClassifier(this)
 
@@ -147,6 +196,9 @@ class MainActivity : ComponentActivity() {
 
         viewModel.setCalibrationCompleter { completeCalibration() }
         requestCameraPermissionIfNeeded()
+
+        // Initialize Health Connect and request permissions
+        checkAndRequestHealthConnectPermissions()
 
         setContent {
             com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme {
@@ -191,29 +243,116 @@ class MainActivity : ComponentActivity() {
                     // Camera initialization effects
                     val uiState by viewModel.uiState.collectAsState()
                     LaunchedEffect(uiState) {
-                        if (uiState is UiState.Calibrating || uiState is UiState.Recording) {
-                            if (cameraProvider == null) {
-                                initializeCamera()
-                            } else {
-                                bindCameraUseCases()
+                        Log.d("MainActivity", "🎥 UI State changed to: $uiState")
+                        when (uiState) {
+                            is UiState.CameraSetup -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 CameraSetup state - camera not needed yet"
+                                )
+                                // Don't start camera automatically - wait for user to choose
+                                // tracking mode
+                            }
+                            is UiState.Calibrating -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 Calibrating state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
+                            }
+                            is UiState.Recording -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 Recording state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
+                            }
+                            is UiState.Initial -> {
+                                Log.d("MainActivity", "🎥 Initial state - camera not needed")
+                                // Stop camera to save resources when not needed
+                                viewModel.stopCamera()
+                            }
+                            is UiState.Results -> {
+                                Log.d("MainActivity", "🎥 Results state - camera not needed")
+                                // Stop camera to save resources when not needed
+                                viewModel.stopCamera()
+                            }
+                            is UiState.DiseaseDetection -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 DiseaseDetection state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
                             }
                         }
                     }
 
                     val isCameraStarted by viewModel.isCameraStarted.collectAsState()
                     LaunchedEffect(isCameraStarted) {
-                        if (isCameraStarted && uiState is UiState.CameraSetup) {
-                            if (cameraProvider == null) {
-                                initializeCamera()
-                            } else {
-                                bindCameraUseCases()
-                            }
+                        Log.d(
+                                "MainActivity",
+                                "🎥 Camera started state changed to: $isCameraStarted, current UI state: $uiState"
+                        )
+                        // Ensure camera is initialized when camera started state changes to true
+                        if (isCameraStarted && cameraProvider == null) {
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 Camera started but no provider, initializing..."
+                            )
+                            initializeCamera()
+                        } else if (isCameraStarted && cameraProvider != null) {
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 Camera started and provider exists, binding use cases..."
+                            )
+                            bindCameraUseCases()
                         }
                     }
 
                     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
                     LaunchedEffect(isFrontCamera) {
+                        Log.d("MainActivity", "🎥 Front camera state changed to: $isFrontCamera")
                         if (cameraProvider != null) {
+                            Log.d("MainActivity", "🎥 Rebinding camera for camera flip")
                             bindCameraUseCases()
                         }
                     }
@@ -251,8 +390,33 @@ class MainActivity : ComponentActivity() {
             rotationDegrees: Int
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Camera preview
-            AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            // Camera preview - ensure PreviewView is properly displayed
+            AndroidView(
+                    factory = { context ->
+                        Log.d(
+                                "MainActivity",
+                                "🎥 AndroidView factory called - creating/returning PreviewView"
+                        )
+                        previewView.apply {
+                            // Ensure proper scaling and implementation mode
+                            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 PreviewView configured in AndroidView factory"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { view ->
+                        Log.d("MainActivity", "🎥 AndroidView update called")
+                        // Ensure the surface provider is set
+                        if (preview != null) {
+                            preview?.setSurfaceProvider(view.surfaceProvider)
+                            Log.d("MainActivity", "🎥 Surface provider set in AndroidView update")
+                        }
+                    }
+            )
 
             // QR/YOLO overlays based on tracking mode
             val trackingMode by viewModel.currentTrackingMode.collectAsState()
@@ -980,21 +1144,29 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun initializeCamera() {
+        Log.d("MainActivity", "🎥 initializeCamera() called")
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
                         PackageManager.PERMISSION_GRANTED
         ) {
+            Log.w("MainActivity", "🎥 Camera permission not granted, requesting...")
             requestCameraPermissionIfNeeded()
             return
         }
 
+        Log.d("MainActivity", "🎥 Camera permission granted, proceeding with initialization")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener(
                 {
                     try {
+                        Log.d("MainActivity", "🎥 Camera provider future completed")
                         cameraProvider = cameraProviderFuture.get()
+                        Log.d(
+                                "MainActivity",
+                                "🎥 Camera provider obtained successfully, calling bindCameraUseCases"
+                        )
                         bindCameraUseCases()
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to initialize camera", e)
+                        Log.e(TAG, "🎥 Failed to initialize camera", e)
                         Toast.makeText(
                                         this,
                                         "Failed to initialize camera: ${e.message}",
@@ -1008,16 +1180,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun bindCameraUseCases() {
+        Log.d("MainActivity", "🎥 bindCameraUseCases() called")
         val cameraProvider = cameraProvider ?: return
 
         try {
+            Log.d("MainActivity", "🎥 Unbinding all previous camera use cases")
             cameraProvider.unbindAll()
 
+            Log.d("MainActivity", "🎥 Creating preview use case")
             preview =
-                    Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    Preview.Builder().build().also { previewUseCase ->
+                        Log.d("MainActivity", "🎥 Setting surface provider for preview")
+                        previewUseCase.setSurfaceProvider(previewView.surfaceProvider)
+                        Log.d("MainActivity", "🎥 Preview surface provider set successfully")
                     }
 
+            Log.d("MainActivity", "🎥 Creating image analyzer use case")
             imageAnalyzer =
                     ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -1035,6 +1213,7 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                 }
+                                Log.d("MainActivity", "🎥 Image analyzer set")
                             }
 
             val isFrontCamera = viewModel.isFrontCamera.value
@@ -1045,9 +1224,19 @@ class MainActivity : ComponentActivity() {
                         CameraSelector.DEFAULT_BACK_CAMERA
                     }
 
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+            Log.d("MainActivity", "🎥 Using ${if (isFrontCamera) "front" else "back"} camera")
+            Log.d("MainActivity", "🎥 Binding camera to lifecycle")
+
+            val camera =
+                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+
+            Log.d("MainActivity", "🎥 Camera successfully bound to lifecycle")
+            Log.d("MainActivity", "🎥 Camera info: ${camera.cameraInfo}")
+            Log.d("MainActivity", "🎥 Preview use case: $preview")
+            Log.d("MainActivity", "🎥 PreviewView: $previewView")
+            Log.d("MainActivity", "🎥 PreviewView surface provider: ${previewView.surfaceProvider}")
         } catch (exc: Exception) {
-            Log.e(TAG, "Use case binding failed", exc)
+            Log.e(TAG, "🎥 Use case binding failed", exc)
             Toast.makeText(this, "Camera initialization failed: ${exc.message}", Toast.LENGTH_LONG)
                     .show()
         }
@@ -2501,6 +2690,85 @@ class MainActivity : ComponentActivity() {
             } else {
                 Log.w("MainActivity", "⚠️ No patient data found in NFC tag")
                 Toast.makeText(this, "⚠️ No patient data found in NFC tag", Toast.LENGTH_SHORT)
+                        .show()
+            }
+        }
+    }
+
+    /** Check and request Health Connect permissions for real health data access */
+    private fun checkAndRequestHealthConnectPermissions() {
+        lifecycleScope.launch {
+            try {
+                // Check if Health Connect is available
+                when (HealthConnectClient.getSdkStatus(this@MainActivity)) {
+                    HealthConnectClient.SDK_AVAILABLE -> {
+                        Log.d("HealthConnect", "✅ Health Connect is available")
+
+                        val healthConnectClient = HealthConnectClient.getOrCreate(this@MainActivity)
+                        val grantedPermissions =
+                                healthConnectClient.permissionController.getGrantedPermissions()
+
+                        if (healthConnectPermissions.all { it in grantedPermissions }) {
+                            Log.d(
+                                    "HealthConnect",
+                                    "✅ All Health Connect permissions already granted"
+                            )
+                            Toast.makeText(
+                                            this@MainActivity,
+                                            "✅ Health Connect ready! Receiving real data from your smartwatch",
+                                            Toast.LENGTH_SHORT
+                                    )
+                                    .show()
+                        } else {
+                            Log.d("HealthConnect", "🔐 Requesting Health Connect permissions...")
+                            // Request missing permissions
+                            healthConnectPermissionLauncher.launch(healthConnectPermissions)
+                        }
+                    }
+                    HealthConnectClient.SDK_UNAVAILABLE -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Health Connect not available - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect unavailable. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                    HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Health Connect needs update - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect needs update. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                    else -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Unknown Health Connect status - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect status unknown. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("HealthConnect", "❌ Error checking Health Connect permissions", e)
+                Toast.makeText(
+                                this@MainActivity,
+                                "Error accessing Health Connect. Using simulated health data.",
+                                Toast.LENGTH_LONG
+                        )
                         .show()
             }
         }
