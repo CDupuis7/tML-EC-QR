@@ -6,7 +6,8 @@ import java.time.Instant
 data class HealthData(
         val heartRate: Double? = null, // BPM (beats per minute)
         val spO2: Double? = null, // Oxygen saturation percentage
-        val timestamp: Instant = Instant.now()
+        val timestamp: Instant = Instant.now(),
+        val isRealData: Boolean = false // Track if data comes from real Health Connect sources
 ) {
     /** Check if we have valid health data */
     fun isValid(): Boolean = heartRate != null || spO2 != null
@@ -38,4 +39,7 @@ data class HealthData(
 
         return listOfNotNull(hrStatus, spO2Status).joinToString(", ").ifEmpty { "No Data" }
     }
+
+    /** Get data source indicator for debugging */
+    fun getDataSourceDisplay(): String = if (isRealData) "📱 Real" else "🔄 Sim"
 }

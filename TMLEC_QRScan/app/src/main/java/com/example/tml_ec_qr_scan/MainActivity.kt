@@ -47,6 +47,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.OxygenSaturationRecord
+import androidx.lifecycle.lifecycleScope
 import boofcv.android.ConvertBitmap
 import boofcv.factory.fiducial.FactoryFiducial
 import boofcv.struct.image.GrayU8
@@ -60,6 +66,7 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: ExecutorService
@@ -83,6 +90,37 @@ class MainActivity : ComponentActivity() {
 
     // NFC support for patient data
     private lateinit var nfcManager: NFCManager
+
+    // Health Connect permission handling
+    private val healthConnectPermissions =
+            setOf(
+                    HealthPermission.getReadPermission(HeartRateRecord::class),
+                    HealthPermission.getReadPermission(OxygenSaturationRecord::class)
+            )
+
+    // Health Connect permission launcher
+    private val healthConnectPermissionLauncher =
+            registerForActivityResult(
+                    PermissionController.createRequestPermissionResultContract()
+            ) { granted ->
+                if (granted.containsAll(healthConnectPermissions)) {
+                    Log.d("HealthConnect", "✅ All Health Connect permissions granted")
+                    Toast.makeText(
+                                    this,
+                                    "Health Connect permissions granted! Now receiving real data from your smartwatch",
+                                    Toast.LENGTH_LONG
+                            )
+                            .show()
+                } else {
+                    Log.w("HealthConnect", "⚠️ Some Health Connect permissions were denied")
+                    Toast.makeText(
+                                    this,
+                                    "Some health permissions denied. Using simulated data as fallback.",
+                                    Toast.LENGTH_LONG
+                            )
+                            .show()
+                }
+            }
 
     // Calibration related variables
     private var isCalibrating = false
@@ -158,6 +196,9 @@ class MainActivity : ComponentActivity() {
 
         viewModel.setCalibrationCompleter { completeCalibration() }
         requestCameraPermissionIfNeeded()
+
+        // Initialize Health Connect and request permissions
+        checkAndRequestHealthConnectPermissions()
 
         setContent {
             com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme {
@@ -2649,6 +2690,85 @@ class MainActivity : ComponentActivity() {
             } else {
                 Log.w("MainActivity", "⚠️ No patient data found in NFC tag")
                 Toast.makeText(this, "⚠️ No patient data found in NFC tag", Toast.LENGTH_SHORT)
+                        .show()
+            }
+        }
+    }
+
+    /** Check and request Health Connect permissions for real health data access */
+    private fun checkAndRequestHealthConnectPermissions() {
+        lifecycleScope.launch {
+            try {
+                // Check if Health Connect is available
+                when (HealthConnectClient.getSdkStatus(this@MainActivity)) {
+                    HealthConnectClient.SDK_AVAILABLE -> {
+                        Log.d("HealthConnect", "✅ Health Connect is available")
+
+                        val healthConnectClient = HealthConnectClient.getOrCreate(this@MainActivity)
+                        val grantedPermissions =
+                                healthConnectClient.permissionController.getGrantedPermissions()
+
+                        if (healthConnectPermissions.all { it in grantedPermissions }) {
+                            Log.d(
+                                    "HealthConnect",
+                                    "✅ All Health Connect permissions already granted"
+                            )
+                            Toast.makeText(
+                                            this@MainActivity,
+                                            "✅ Health Connect ready! Receiving real data from your smartwatch",
+                                            Toast.LENGTH_SHORT
+                                    )
+                                    .show()
+                        } else {
+                            Log.d("HealthConnect", "🔐 Requesting Health Connect permissions...")
+                            // Request missing permissions
+                            healthConnectPermissionLauncher.launch(healthConnectPermissions)
+                        }
+                    }
+                    HealthConnectClient.SDK_UNAVAILABLE -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Health Connect not available - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect unavailable. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                    HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Health Connect needs update - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect needs update. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                    else -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Unknown Health Connect status - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect status unknown. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("HealthConnect", "❌ Error checking Health Connect permissions", e)
+                Toast.makeText(
+                                this@MainActivity,
+                                "Error accessing Health Connect. Using simulated health data.",
+                                Toast.LENGTH_LONG
+                        )
                         .show()
             }
         }
