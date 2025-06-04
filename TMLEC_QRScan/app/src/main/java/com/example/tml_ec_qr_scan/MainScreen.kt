@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -194,12 +195,19 @@ fun InitialScreen(
         var patientId by remember { mutableStateOf(patientMetadata?.id ?: "") }
         var age by remember { mutableStateOf(patientMetadata?.age?.toString() ?: "") }
         var gender by remember { mutableStateOf(patientMetadata?.gender ?: "") }
-        var healthCondition by remember { mutableStateOf(patientMetadata?.healthStatus ?: "") }
+        var healthCondition: MutableList<String> by remember { mutableStateOf(patientMetadata?.healthStatus
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.toMutableList()
+                ?: mutableListOf())
+        }
+        // var healthCondition by remember { mutableStateOf(patientMetadata?.healthStatus) }
 
         // Define dropdown options
         val genderOptions = listOf("Male", "Female", "Other")
         val healthConditionOptions =
                 listOf("Healthy", "Asthmatic", "COPD", "Respiratory Infection", "Other")
+
 
         // State for dropdown expanded status
         var genderExpanded by remember { mutableStateOf(false) }
@@ -215,7 +223,11 @@ fun InitialScreen(
                         patientId = metadata.id
                         age = if (metadata.age > 0) metadata.age.toString() else ""
                         gender = metadata.gender
-                        healthCondition = metadata.healthStatus
+                        // healthCondition = metadata.healthStatus
+                        healthCondition = healthCondition.toMutableList().apply {
+                                add(metadata.healthStatus)
+                        }
+
                 }
         }
 
@@ -241,7 +253,7 @@ fun InitialScreen(
 
                         modifier =
                                 Modifier.padding(
-                                        top = 18.dp,
+                                        top = 40.dp,
 
                                 )
                 )
@@ -397,7 +409,7 @@ fun InitialScreen(
                                 }
                         }
                 }
-
+/*
                 // Health condition dropdown
                 Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
@@ -437,7 +449,104 @@ fun InitialScreen(
                                 }
                         }
                 }
+*/
 
+                // Health condition dropdown
+                Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalAlignment = Alignment.Start
+                ) {
+                        var selectedConditions by remember { mutableStateOf(mutableListOf<String>()) }
+                        val healthConditionOptions2 =
+                                listOf("Asthmatic", "COPD", "Respiratory Infection")
+                        var isHealthyChecked by remember { mutableStateOf(false) }
+                        var isOtherChecked by remember { mutableStateOf(false) }
+                        var otherConditionText by remember {mutableStateOf("")}
+
+                        Text("Please Select any Preexisting Conditions: ")
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()){
+                                Checkbox(
+                                        checked = isHealthyChecked,
+                                        onCheckedChange = { checked ->
+                                                isHealthyChecked = checked
+                                                if (checked) healthCondition = healthCondition.toMutableList().apply {
+                                                        add("Healthy")
+                                                }else healthCondition = healthCondition.toMutableList().apply {
+                                                        remove("Healthy")
+                                                }
+                                        }
+                                )
+                                Text(text = "Healthy", modifier = Modifier.clickable{
+                                        isHealthyChecked = !isHealthyChecked
+
+                                }.padding(start = 8.dp))
+                        }
+                        val isEnabled = !isHealthyChecked
+                        healthConditionOptions2.forEach { option ->
+
+                                val isChecked = healthCondition.contains(option)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                                checked = isChecked,
+                                                onCheckedChange = { checked ->
+                                                        if (isEnabled) healthCondition = healthCondition.toMutableList().apply {
+                                                                if (checked) add(option) else remove(option)
+                                                        }
+                                                }, enabled = isEnabled
+                                        )
+                                        Text(
+                                                text = option,
+                                                modifier = Modifier.clickable(enabled = isEnabled) {
+                                                        healthCondition = healthCondition.toMutableList().apply{
+                                                                if (contains(option)) remove(option) else add (option)
+                                                        }
+                                                }
+                                                        .padding(start = 8.dp), color = if (isEnabled) Color.Unspecified else Color.Gray
+                                        )
+                                }
+
+                        }
+                        if (isHealthyChecked){
+                                isOtherChecked = false
+                                otherConditionText = ""
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()){
+
+                                Checkbox(
+                                        checked = isOtherChecked,
+                                        onCheckedChange = { checked ->
+                                                if (isEnabled) isOtherChecked = checked
+                                                if(!isOtherChecked){
+                                                        otherConditionText = ""
+                                                }
+                                        }, enabled = isEnabled
+
+                                )
+                                Text(text = "Other", modifier = Modifier.clickable (enabled = isEnabled){
+                                        isOtherChecked = !isOtherChecked
+                                        if (!isOtherChecked) {
+                                                otherConditionText = ""
+                                        }
+
+                                }.padding(start = 8.dp), color = if (isEnabled) Color.Unspecified else Color.Gray)
+                        }
+                        if (isOtherChecked){
+                                OutlinedTextField(
+                                        value = otherConditionText,
+                                        onValueChange = { newText ->
+                                                otherConditionText = newText
+                                                healthCondition = healthCondition.toMutableList().apply{
+                                                        removeAll { it !in listOf("Asthmatic", "COPD", "Respiratory Infection", "Healthy") }
+                                                        if (newText.isNotBlank()){
+                                                                add(newText)
+                                                        }
+
+                                                }},
+                                        label = { Text("Please Specify")},
+                                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                )
+                        }
+                }
                 // FIXED: Reduced spacing before buttons
                 Spacer(modifier = Modifier.height(8.dp)) // REDUCED: Much smaller spacer
 
@@ -447,7 +556,7 @@ fun InitialScreen(
                                 patientId.isNotBlank() &&
                                 age.isNotBlank() &&
                                 gender.isNotBlank() &&
-                                healthCondition.isNotBlank()
+                                healthCondition.isNotEmpty()
                 ) {
 
                         Button(
@@ -458,7 +567,7 @@ fun InitialScreen(
                                                         id = patientId,
                                                         age = numAge,
                                                         gender = gender,
-                                                        healthStatus = healthCondition
+                                                        healthStatus = healthCondition.joinToString(", ")
                                                 )
 
                                         // Launch NFC write activity with current data
@@ -493,7 +602,7 @@ fun InitialScreen(
                                                 id = patientId,
                                                 age = numAge,
                                                 gender = gender,
-                                                healthStatus = healthCondition
+                                                healthStatus = healthCondition.joinToString(", ")
                                         )
                                 onUpdatePatientMetadata(metadata)
                                 onProceedToCameraSetup()
@@ -812,10 +921,20 @@ fun RecordingScreen(
         val breathingClassification = viewModel.breathingClassification.collectAsState().value
         val classificationConfidence = viewModel.classificationConfidence.collectAsState().value
 
+        // Keeps the screen active for 60 seconds during recording
+        val context = LocalContext.current
+        val activity = context as? MainActivity
+        LaunchedEffect(Unit) {
+                activity?.keepScreenOn {
+                        delay(60_000)
+                }
+        }
+
         Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
+                //Spacer(modifier = Modifier.height(160.dp))
                 // Back button at the top
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
                         BackButton(
@@ -937,6 +1056,7 @@ fun RecordingScreen(
 
                 // If recording, show breathing info
                 if (isRecording) {
+
                         // Display breathing phase info
                         Text(
                                 text = "Recording Respiratory Data",
@@ -1756,4 +1876,5 @@ fun RespiratoryGraph(respiratoryData: List<RespiratoryDataPoint>, modifier: Modi
                         yTextPaint
                 )
         }
+
 }
