@@ -4,6 +4,7 @@ package com.example.tml_ec_qr_scan
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.magnifier
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -19,8 +20,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.tml_ec_qr_scan.ChatGPT.ChatViewModel
 import kotlinx.coroutines.delay
 
 // CompositionLocal to provide ViewModel access in nested composables
@@ -193,7 +197,8 @@ fun InitialScreen(
         patientMetadata: PatientMetadata?,
         onUpdatePatientMetadata: (PatientMetadata) -> Unit,
         onProceedToCameraSetup: () -> Unit,
-        onBackClick: () -> Unit
+        onBackClick: () -> Unit,
+        viewModel: ChatViewModel = viewModel()
 ) {
         var patientId by remember { mutableStateOf(patientMetadata?.id ?: "") }
         var age by remember { mutableStateOf(patientMetadata?.age?.toString() ?: "") }
@@ -213,6 +218,11 @@ fun InitialScreen(
         val context = androidx.compose.ui.platform.LocalContext.current
         val nfcManager = remember { NFCManager(context) }
 
+        // Used For Assistant card
+        var showAssistant by remember { mutableStateOf(false) }
+        val chatResponse by viewModel.response.collectAsState()
+        var userInput by remember { mutableStateOf("") }
+
         // Update fields when patientMetadata changes (e.g., from NFC)
         LaunchedEffect(patientMetadata) {
                 patientMetadata?.let { metadata ->
@@ -222,6 +232,7 @@ fun InitialScreen(
                         healthCondition = metadata.healthStatus
                 }
         }
+
 
         // FIXED: Added scrollable column with proper spacing
         Column(
@@ -254,202 +265,266 @@ fun InitialScreen(
                         modifier = Modifier.padding(bottom = 4.dp) // REDUCED: Much smaller padding
                 )
 
-                // FIXED: Patient info title with minimal spacing
-                Text(
-                        text = "Patient Information",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = Color(0xFF4CAF50),
-                        modifier =
-                                Modifier.padding(bottom = 8.dp) // REDUCED: Smaller bottom padding
-                )
 
-                // NFC Status Card - made more compact
-                Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors =
-                                CardDefaults.cardColors(
-                                        containerColor =
-                                                when {
-                                                        !nfcManager.isNFCAvailable() ->
-                                                                Color(0xFFFFEBEE) // Light red
-                                                        !nfcManager.isNFCEnabled() ->
-                                                                Color(0xFFFFF3E0) // Light orange
-                                                        else -> Color(0xFFE8F5E9) // Light green
-                                                }
-                                )
-                ) {
-                        Column(
                                 modifier =
                                         Modifier.padding(
-                                                12.dp
-                                        ), // REDUCED: Smaller internal padding
-                                horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                                Text(
-                                        text = "📱 NFC Quick Fill",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                )
+                                                top = 18.dp,
 
-                                Spacer(modifier = Modifier.height(4.dp)) // REDUCED: Smaller spacer
+                                                )
+                        )
+                        Text(
+                                text = "(A Respiratory Health Monitoring App)",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color(0xFF9C27B0),
+                                modifier =
+                                        Modifier.padding(
 
-                                Text(
-                                        text = nfcManager.getNFCStatusMessage(),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color =
-                                                when {
-                                                        !nfcManager.isNFCAvailable() ->
-                                                                Color(0xFFD32F2F) // Red
-                                                        !nfcManager.isNFCEnabled() ->
-                                                                Color(0xFFF57C00) // Orange
-                                                        else -> Color(0xFF388E3C) // Green
-                                                }
-                                )
+                                                bottom = 4.dp
+                                        ) // REDUCED: Much smaller padding
+                        )
 
-                                if (nfcManager.isNFCAvailable() && nfcManager.isNFCEnabled()) {
-                                        Spacer(
-                                                modifier = Modifier.height(4.dp)
-                                        ) // REDUCED: Smaller spacer
-                                        Text(
-                                                text =
-                                                        "🏷️ Tap an NFC tag with patient data to auto-fill the form",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = Color(0xFF388E3C),
-                                                textAlign =
-                                                        androidx.compose.ui.text.style.TextAlign
-                                                                .Center
+                        // FIXED: Patient info title with minimal spacing
+                        Text(
+                                text = "Patient Information",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = Color(0xFF4CAF50),
+                                modifier =
+                                        Modifier.padding(bottom = 8.dp) // REDUCED: Smaller bottom padding
+                        )
+
+                        // NFC Status Card - made more compact
+                        Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors =
+                                        CardDefaults.cardColors(
+                                                containerColor =
+                                                        when {
+                                                                !nfcManager.isNFCAvailable() ->
+                                                                        Color(0xFFFFEBEE) // Light red
+                                                                !nfcManager.isNFCEnabled() ->
+                                                                        Color(0xFFFFF3E0) // Light orange
+                                                                else -> Color(0xFFE8F5E9) // Light green
+                                                        }
                                         )
-                                } else if (!nfcManager.isNFCEnabled() && nfcManager.isNFCAvailable()
+                        ) {
+                                Column(
+                                        modifier =
+                                                Modifier.padding(
+                                                        12.dp
+                                                ), // REDUCED: Smaller internal padding
+                                        horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                        Spacer(
-                                                modifier = Modifier.height(6.dp)
-                                        ) // REDUCED: Smaller spacer
-                                        Button(
-                                                onClick = { nfcManager.showNFCSettings() },
-                                                colors =
-                                                        ButtonDefaults.buttonColors(
-                                                                containerColor = Color(0xFFF57C00)
-                                                        ),
-                                                modifier = Modifier.fillMaxWidth()
-                                        ) { Text("Enable NFC") }
-                                }
-                        }
-                }
-
-                OutlinedTextField(
-                        value = patientId,
-                        onValueChange = { patientId = it },
-                        label = { Text("Patient ID") },
-                        modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                        value = age,
-                        onValueChange = {
-                                // Only allow numeric input for age
-                                if (it.isEmpty() || it.all { char -> char.isDigit() }) {
-                                        age = it
-                                }
-                        },
-                        label = { Text("Age") },
-                        modifier = Modifier.fillMaxWidth(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
-
-                // Gender dropdown
-                Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                                value = gender,
-                                onValueChange = { /* Disabled direct editing */},
-                                label = { Text("Gender") },
-                                modifier = Modifier.fillMaxWidth(),
-                                readOnly = true,
-                                trailingIcon = {
-                                        IconButton(onClick = { genderExpanded = true }) {
-                                                Icon(Icons.Default.ArrowDropDown, "Dropdown")
-                                        }
-                                }
-                        )
-
-                        // Invisible clickable box that triggers the dropdown
-                        Box(
-                                modifier =
-                                        Modifier.matchParentSize().clickable {
-                                                genderExpanded = true
-                                        }
-                        )
-
-                        DropdownMenu(
-                                expanded = genderExpanded,
-                                onDismissRequest = { genderExpanded = false },
-                                modifier = Modifier.fillMaxWidth(0.9f)
-                        ) {
-                                genderOptions.forEach { option ->
-                                        DropdownMenuItem(
-                                                text = { Text(option) },
-                                                onClick = {
-                                                        gender = option
-                                                        genderExpanded = false
-                                                }
+                                        Text(
+                                                text = "📱 NFC Quick Fill",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = Color(0xFF505050),
+                                                fontWeight = FontWeight.Bold
                                         )
-                                }
-                        }
-                }
 
-                // Health condition dropdown
-                Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                                value = healthCondition,
-                                onValueChange = { /* Disabled direct editing */},
-                                label = { Text("Health Condition") },
-                                modifier = Modifier.fillMaxWidth(),
-                                readOnly = true,
-                                trailingIcon = {
-                                        IconButton(onClick = { healthConditionExpanded = true }) {
-                                                Icon(Icons.Default.ArrowDropDown, "Dropdown")
-                                        }
-                                }
-                        )
+                                        Spacer(modifier = Modifier.height(4.dp)) // REDUCED: Smaller spacer
 
-                        // Invisible clickable box that triggers the dropdown
-                        Box(
-                                modifier =
-                                        Modifier.matchParentSize().clickable {
-                                                healthConditionExpanded = true
-                                        }
-                        )
-
-                        DropdownMenu(
-                                expanded = healthConditionExpanded,
-                                onDismissRequest = { healthConditionExpanded = false },
-                                modifier = Modifier.fillMaxWidth(0.9f)
-                        ) {
-                                healthConditionOptions.forEach { option ->
-                                        DropdownMenuItem(
-                                                text = { Text(option) },
-                                                onClick = {
-                                                        healthCondition = option
-                                                        healthConditionExpanded = false
-                                                }
+                                        Text(
+                                                text = nfcManager.getNFCStatusMessage(),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color =
+                                                        when {
+                                                                !nfcManager.isNFCAvailable() ->
+                                                                        Color(0xFFD32F2F) // Red
+                                                                !nfcManager.isNFCEnabled() ->
+                                                                        Color(0xFFF57C00) // Orange
+                                                                else -> Color(0xFF388E3C) // Green
+                                                        }
                                         )
+
+                                        if (nfcManager.isNFCAvailable() && nfcManager.isNFCEnabled()) {
+                                                Spacer(
+                                                        modifier = Modifier.height(4.dp)
+                                                ) // REDUCED: Smaller spacer
+                                                Text(
+                                                        text =
+                                                                "🏷️ Tap an NFC tag with patient data to auto-fill the form",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = Color(0xFF388E3C),
+                                                        textAlign =
+                                                                androidx.compose.ui.text.style.TextAlign
+                                                                        .Center
+                                                )
+                                        } else if (!nfcManager.isNFCEnabled() && nfcManager.isNFCAvailable()
+                                        ) {
+                                                Spacer(
+                                                        modifier = Modifier.height(6.dp)
+                                                ) // REDUCED: Smaller spacer
+                                                Button(
+                                                        onClick = { nfcManager.showNFCSettings() },
+                                                        colors =
+                                                                ButtonDefaults.buttonColors(
+                                                                        containerColor = Color(
+                                                                                0xFFF57C00
+                                                                        )
+                                                                ),
+                                                        modifier = Modifier.fillMaxWidth()
+                                                ) { Text("Enable NFC") }
+                                        }
                                 }
                         }
-                }
 
-                // FIXED: Reduced spacing before buttons
-                Spacer(modifier = Modifier.height(8.dp)) // REDUCED: Much smaller spacer
+                        OutlinedTextField(
+                                value = patientId,
+                                onValueChange = { patientId = it },
+                                label = { Text("Patient ID") },
+                                modifier = Modifier.fillMaxWidth()
+                        )
 
-                // Write to NFC button (if form is filled and NFC is available)
-                if (nfcManager.isNFCAvailable() &&
+                        OutlinedTextField(
+                                value = age,
+                                onValueChange = {
+                                        // Only allow numeric input for age
+                                        if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                                                age = it
+                                        }
+                                },
+                                label = { Text("Age") },
+                                modifier = Modifier.fillMaxWidth(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+
+                        // Gender dropdown
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                        value = gender,
+                                        onValueChange = { /* Disabled direct editing */ },
+                                        label = { Text("Gender") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        readOnly = true,
+                                        trailingIcon = {
+                                                IconButton(onClick = { genderExpanded = true }) {
+                                                        Icon(
+                                                                Icons.Default.ArrowDropDown,
+                                                                "Dropdown"
+                                                        )
+                                                }
+                                        }
+                                )
+
+                                // Invisible clickable box that triggers the dropdown
+                                Box(
+                                        modifier =
+                                                Modifier.matchParentSize().clickable {
+                                                        genderExpanded = true
+                                                }
+                                )
+
+                                DropdownMenu(
+                                        expanded = genderExpanded,
+                                        onDismissRequest = { genderExpanded = false },
+                                        modifier = Modifier.fillMaxWidth(0.9f)
+                                ) {
+                                        genderOptions.forEach { option ->
+                                                DropdownMenuItem(
+                                                        text = { Text(option) },
+                                                        onClick = {
+                                                                gender = option
+                                                                genderExpanded = false
+                                                        }
+                                                )
+                                        }
+                                }
+                        }
+
+                        // Health condition dropdown
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                                OutlinedTextField(
+                                        value = healthCondition,
+                                        onValueChange = { /* Disabled direct editing */ },
+                                        label = { Text("Health Condition") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        readOnly = true,
+                                        trailingIcon = {
+                                                IconButton(onClick = {
+                                                        healthConditionExpanded = true
+                                                }) {
+                                                        Icon(
+                                                                Icons.Default.ArrowDropDown,
+                                                                "Dropdown"
+                                                        )
+                                                }
+                                        }
+                                )
+
+                                // Invisible clickable box that triggers the dropdown
+                                Box(
+                                        modifier =
+                                                Modifier.matchParentSize().clickable {
+                                                        healthConditionExpanded = true
+                                                }
+                                )
+
+                                DropdownMenu(
+                                        expanded = healthConditionExpanded,
+                                        onDismissRequest = { healthConditionExpanded = false },
+                                        modifier = Modifier.fillMaxWidth(0.9f)
+                                ) {
+                                        healthConditionOptions.forEach { option ->
+                                                DropdownMenuItem(
+                                                        text = { Text(option) },
+                                                        onClick = {
+                                                                healthCondition = option
+                                                                healthConditionExpanded = false
+                                                        }
+                                                )
+                                        }
+                                }
+                        }
+
+                        // FIXED: Reduced spacing before buttons
+                        Spacer(modifier = Modifier.height(8.dp)) // REDUCED: Much smaller spacer
+
+                        // Write to NFC button (if form is filled and NFC is available)
+                        if (nfcManager.isNFCAvailable() &&
                                 nfcManager.isNFCEnabled() &&
                                 patientId.isNotBlank() &&
                                 age.isNotBlank() &&
                                 gender.isNotBlank() &&
                                 healthCondition.isNotBlank()
-                ) {
+                        ) {
+
+                                Button(
+                                        onClick = {
+                                                val numAge = age.toIntOrNull() ?: 0
+                                                val metadata =
+                                                        PatientMetadata(
+                                                                id = patientId,
+                                                                age = numAge,
+                                                                gender = gender,
+                                                                healthStatus = healthCondition
+                                                        )
+
+                                                // Launch NFC write activity with current data
+                                                val intent =
+                                                        NFCWriteActivity.createIntent(
+                                                                context as
+                                                                        androidx.activity.ComponentActivity,
+                                                                metadata
+                                                        )
+                                                context.startActivity(intent)
+                                        },
+                                        modifier =
+                                                Modifier.fillMaxWidth()
+                                                        .height(48.dp), // REDUCED: Smaller button height
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor = Color(0xFF673AB7) // Purple
+                                                )
+                                ) { Text("📝 Write to NFC Tag") }
+
+                                Spacer(
+                                        modifier = Modifier.height(6.dp)
+                                ) // REDUCED: Smaller spacer between buttons
+                        }
 
                         Button(
                                 onClick = {
+                                        // Save patient metadata before proceeding
                                         val numAge = age.toIntOrNull() ?: 0
                                         val metadata =
                                                 PatientMetadata(
@@ -458,57 +533,142 @@ fun InitialScreen(
                                                         gender = gender,
                                                         healthStatus = healthCondition
                                                 )
-
-                                        // Launch NFC write activity with current data
-                                        val intent =
-                                                NFCWriteActivity.createIntent(
-                                                        context as
-                                                                androidx.activity.ComponentActivity,
-                                                        metadata
-                                                )
-                                        context.startActivity(intent)
+                                        onUpdatePatientMetadata(metadata)
+                                        onProceedToCameraSetup()
                                 },
+                                enabled = patientId.isNotBlank() && age.isNotBlank() && gender.isNotBlank(),
                                 modifier =
                                         Modifier.fillMaxWidth()
                                                 .height(48.dp), // REDUCED: Smaller button height
                                 colors =
                                         ButtonDefaults.buttonColors(
-                                                containerColor = Color(0xFF673AB7) // Purple
+                                                containerColor = Color(0xFF2196F3),
+                                                disabledContainerColor = Color(0xFFBDBDBD)
                                         )
-                        ) { Text("📝 Write to NFC Tag") }
+                        ) {
+                                Text(
+                                        text = "Proceed to Camera Setup",
+                                        color = Color(0xFF000000)
+                                )
+                        }
 
-                        Spacer(
-                                modifier = Modifier.height(6.dp)
-                        ) // REDUCED: Smaller spacer between buttons
+
+                        // ADDED: Bottom padding to ensure content is not cut off
+                        Spacer(modifier = Modifier.height(16.dp))
                 }
 
                 Button(
-                        onClick = {
-                                // Save patient metadata before proceeding
-                                val numAge = age.toIntOrNull() ?: 0
-                                val metadata =
-                                        PatientMetadata(
-                                                id = patientId,
-                                                age = numAge,
-                                                gender = gender,
-                                                healthStatus = healthCondition
-                                        )
-                                onUpdatePatientMetadata(metadata)
-                                onProceedToCameraSetup()
-                        },
-                        enabled = patientId.isNotBlank() && age.isNotBlank() && gender.isNotBlank(),
-                        modifier =
-                                Modifier.fillMaxWidth()
-                                        .height(48.dp), // REDUCED: Smaller button height
+                        onClick = { showAssistant = true },
+
                         colors =
                                 ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF2196F3),
-                                        disabledContainerColor = Color(0xFFBDBDBD)
-                                )
-                ) { Text("Proceed to Camera Setup") }
+                                        containerColor =
+                                                Color(0xFFFF0000) // Bright red
+                                ),
+                        modifier = Modifier
+                                .height(48.dp)
+                                .width(66.dp)
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 16.dp),
 
-                // ADDED: Bottom padding to ensure content is not cut off
-                Spacer(modifier = Modifier.height(16.dp))
+
+                        ) {
+                        Text(
+                                "?",
+                                color = Color(0xFFFFFFFF),
+                                textAlign = TextAlign.Center
+                        )
+                }
+
+
+        }
+        if (showAssistant) {
+                androidx.compose.ui.window.Dialog(onDismissRequest = { showAssistant = false }) {
+
+                        Box(
+                                modifier = Modifier
+                                        .fillMaxSize()
+                        ) {
+                                Card(
+                                        modifier =
+                                                Modifier.fillMaxWidth()
+                                                        .fillMaxHeight(0.5f) // Use 80% of screen height
+                                                        .align(Alignment.BottomCenter),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors =
+                                                CardDefaults.cardColors(
+
+                                                        containerColor =
+                                                                Color(
+                                                                        0xFFFFFFFF
+                                                                )
+                                                )
+                                ) {
+                                        Column(modifier = Modifier.padding(8.dp)) {
+                                                Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                        Text(
+                                                                text = "Assistant",
+                                                                style = MaterialTheme.typography.titleLarge,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.Red
+                                                        )
+
+                                                        // Close button
+                                                        IconButton(onClick = {
+                                                                showAssistant = false
+                                                        }) {
+                                                                Text(
+                                                                        "✕",
+                                                                        fontSize = 24.sp,
+                                                                        color = Color.Red
+                                                                )
+                                                        }
+                                                }
+
+                                                Box(
+                                                        modifier = Modifier
+                                                                .fillMaxHeight(.6f)
+                                                                .background(Color(0xFFF0F0F0))
+                                                                .fillMaxWidth(),
+                                                ) {
+                                                        Text(text = chatResponse, color = Color(0xFF000000))
+                                                }
+
+                                                Spacer(modifier = Modifier.height(8.dp))
+
+                                                OutlinedTextField(
+                                                        value = userInput,
+                                                        onValueChange = { userInput = it },
+                                                        label = { Text("Your Question")},
+                                                        modifier = Modifier.fillMaxWidth()
+
+
+                                                )
+
+                                                Button(
+                                                        onClick = {
+                                                                viewModel.sendMessage(userInput)
+                                                                userInput = ""
+                                                        },
+                                                        modifier = Modifier.align(Alignment.End),
+                                                        colors =
+                                                                ButtonDefaults.buttonColors(
+                                                                        containerColor =
+                                                                                Color(0xFFFF0000) // Bright red
+                                                                ),
+                                                ) {
+                                                        Text("Ask", color = Color(0xFFFFFFFF))
+                                                }
+
+                                        }
+                                }
+
+                        }
+                }
         }
 }
 
@@ -527,150 +687,287 @@ fun CameraSetupScreen(
         // Get camera started state from ViewModel
         val isCameraStarted by viewModel.isCameraStarted.collectAsState()
 
-        Column(
-                modifier =
-                        Modifier.fillMaxSize()
-                                .padding(horizontal = 16.dp)
-                                .padding(top = 48.dp, bottom = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-                // Back button at the top
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                        BackButton(
-                                onBackClick = onBackClick,
-                                modifier = Modifier.padding(bottom = 8.dp)
+        // Used For Assistant card
+        var showAssistant by remember { mutableStateOf(false) }
+        val tips = listOf("If you want to use QR code tracking, calibrate the device by pressing \"Start Calibration\" before tracking.",
+                "If you do not have the proper QR codes for QR tracking, you can press \"Start YOLO Tracking\" for AI tracking.",
+                "Press \"New Patient\" to return to the previous screen to enter a different patient.")
+
+        Box(modifier = Modifier.fillMaxSize()) {
+
+                Column(
+                        modifier =
+                                Modifier.fillMaxSize()
+                                        .padding(horizontal = 16.dp)
+                                        .padding(top = 48.dp, bottom = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                        // Back button at the top
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Start
+                        ) {
+                                BackButton(
+                                        onBackClick = onBackClick,
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                        }
+
+                        Text(
+                                text = "QR Respiratory Tracking",
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(bottom = 15.dp)
                         )
-                }
 
-                Text(
-                        text = "QR Respiratory Tracking",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 15.dp)
-                )
+                        // Display patient info
+                        if (patientMetadata != null) {
+                                Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors =
+                                                CardDefaults.cardColors(
+                                                        containerColor =
+                                                                MaterialTheme.colorScheme.surfaceVariant
+                                                )
+                                ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                                Text(
+                                                        "Patient: ${patientMetadata.id}",
+                                                        style = MaterialTheme.typography.titleMedium
+                                                )
+                                                Text(
+                                                        "Age: ${patientMetadata.age}, Gender: ${patientMetadata.gender}",
+                                                        style = MaterialTheme.typography.bodyMedium
+                                                )
+                                                Text(
+                                                        "Health status: ${patientMetadata.healthStatus}",
+                                                        style = MaterialTheme.typography.bodyMedium
+                                                )
+                                        }
+                                }
+                        }
 
-                // Display patient info
-                if (patientMetadata != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Add Feature explanation card
                         Card(
                                 modifier = Modifier.fillMaxWidth(),
                                 colors =
                                         CardDefaults.cardColors(
-                                                containerColor =
-                                                        MaterialTheme.colorScheme.surfaceVariant
+                                                containerColor = MaterialTheme.colorScheme.primaryContainer
                                         )
                         ) {
                                 Column(modifier = Modifier.padding(16.dp)) {
                                         Text(
-                                                "Patient: ${patientMetadata.id}",
-                                                style = MaterialTheme.typography.titleMedium
+                                                "App Features",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = MaterialTheme.colorScheme.primary
                                         )
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        // Calibration explanation
                                         Text(
-                                                "Age: ${patientMetadata.age}, Gender: ${patientMetadata.gender}",
-                                                style = MaterialTheme.typography.bodyMedium
+                                                "• Start Calibration: Calibrates the QR tracking system to optimize detection",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.padding(vertical = 2.dp)
                                         )
+
+                                        // QR Tracking explanation
                                         Text(
-                                                "Health status: ${patientMetadata.healthStatus}",
-                                                style = MaterialTheme.typography.bodyMedium
+                                                "• Start QR Tracking: Track chest movement using QR codes to record respiratory data and classify breathing patterns",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.padding(vertical = 2.dp)
+                                        )
+
+                                        // YOLO Tracking explanation
+                                        Text(
+                                                "• Start YOLO Tracking: Track chest movement using AI person detection (no QR codes needed)",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.padding(vertical = 2.dp)
                                         )
                                 }
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Add Start Camera button
+                        //                Button(
+                        //                        onClick = { viewModel.startCamera() },
+                        //                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        //                        colors = ButtonDefaults.buttonColors(containerColor =
+                        // Color(0xFF2196F3))
+                        //                ) { Text(if (isCameraStarted) "Camera Started" else "Start
+                        // Camera") }
+
+                        // Buttons
+                        Button(
+                                onClick = { onStartCalibration() },
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(
+                                                0xFF4CAF50
+                                        )
+                                )
+                        ) { Text("Start Calibration") }
+
+                        Button(
+                                onClick = { onStartRecording() },
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(
+                                                0xFF2196F3
+                                        )
+                                )
+                        ) { Text("Start QR Tracking") }
+
+                        Button(
+                                onClick = { onStartYoloTracking() },
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(
+                                                0xFFE8D200
+                                        )
+                                )
+                        ) { Text("Start YOLO Tracking") }
+
+                        Button(
+                                onClick = { onNewPatient() },
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(
+                                                0xFF9C27B0
+                                        )
+                                )
+                        ) { Text("New Patient") }
+
+                        // Training mode toggle
+                        //                Row(
+                        //                        verticalAlignment = Alignment.CenterVertically,
+                        //                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        //                ) {
+                        //                        Text("Training Data Mode")
+                        //                        Spacer(modifier = Modifier.width(8.dp))
+                        //                        Switch(
+                        //                                checked =
+                        // viewModel.isTrainingMode.collectAsState().value,
+                        //                                onCheckedChange = { onToggleTrainingMode() }
+                        //                        )
+                        //                }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Add Feature explanation card
-                Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors =
-                                CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                                )
-                ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                        "App Features",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.primary
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                // Calibration explanation
-                                Text(
-                                        "• Start Calibration: Calibrates the QR tracking system to optimize detection",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(vertical = 2.dp)
-                                )
-
-                                // QR Tracking explanation
-                                Text(
-                                        "• Start QR Tracking: Track chest movement using QR codes to record respiratory data and classify breathing patterns",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(vertical = 2.dp)
-                                )
-
-                                // YOLO Tracking explanation
-                                Text(
-                                        "• Start YOLO Tracking: Track chest movement using AI person detection (no QR codes needed)",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(vertical = 2.dp)
-                                )
-                        }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Add Start Camera button
-                //                Button(
-                //                        onClick = { viewModel.startCamera() },
-                //                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                //                        colors = ButtonDefaults.buttonColors(containerColor =
-                // Color(0xFF2196F3))
-                //                ) { Text(if (isCameraStarted) "Camera Started" else "Start
-                // Camera") }
-
-                // Buttons
-                Button(
-                        onClick = { onStartCalibration() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
-                ) { Text("Start Calibration") }
 
                 Button(
-                        onClick = { onStartRecording() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
-                ) { Text("Start QR Tracking") }
+                        onClick = { showAssistant = true },
 
-                Button(
-                        onClick = { onStartYoloTracking() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
-                ) { Text("Start YOLO Tracking") }
-
-                Button(
-                        onClick = { onNewPatient() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
                         colors =
                                 ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.error
-                                )
-                ) { Text("New Patient") }
+                                        containerColor =
+                                                Color(0xFFFF0000) // Bright red
+                                ),
+                        modifier = Modifier
+                                .height(48.dp)
+                                .width(66.dp)
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 16.dp),
 
-                // Training mode toggle
-                //                Row(
-                //                        verticalAlignment = Alignment.CenterVertically,
-                //                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                //                ) {
-                //                        Text("Training Data Mode")
-                //                        Spacer(modifier = Modifier.width(8.dp))
-                //                        Switch(
-                //                                checked =
-                // viewModel.isTrainingMode.collectAsState().value,
-                //                                onCheckedChange = { onToggleTrainingMode() }
-                //                        )
-                //                }
+
+                        ) {
+                        Text(
+                                "?",
+                                color = Color(0xFFFFFFFF),
+                                textAlign = TextAlign.Center
+                        )
+                }
+
+        }
+        if (showAssistant) {
+                androidx.compose.ui.window.Dialog(onDismissRequest = { showAssistant = false }) {
+
+                        Box(
+                                modifier = Modifier
+                                        .fillMaxSize()
+                        ) {
+                                Card(
+                                        modifier =
+                                                Modifier.fillMaxWidth()
+                                                        .fillMaxHeight(0.5f) // Use 80% of screen height
+                                                        .align(Alignment.BottomCenter),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors =
+                                                CardDefaults.cardColors(
+
+                                                        containerColor =
+                                                                Color(
+                                                                        0xFFFFFFFF
+                                                                )
+                                                )
+                                ) {
+                                        Column(modifier = Modifier.padding(8.dp)) {
+                                                Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                        Text(
+                                                                text = "Assistant",
+                                                                style = MaterialTheme.typography.titleLarge,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color.Red
+                                                        )
+
+                                                        // Close button
+                                                        IconButton(onClick = {
+                                                                showAssistant = false
+                                                        }) {
+                                                                Text(
+                                                                        "✕",
+                                                                        fontSize = 24.sp,
+                                                                        color = Color.Red
+                                                                )
+                                                        }
+                                                }
+
+                                                Box(
+                                                        modifier = Modifier
+                                                                .fillMaxHeight(1f)
+                                                                .fillMaxWidth(),
+
+
+                                                        ) {
+
+                                                        Column(modifier = Modifier.padding(16.dp)){
+                                                                tips.forEach { item ->
+
+                                                                        Row(
+                                                                                verticalAlignment = Alignment.Top,
+                                                                                modifier = Modifier.padding(bottom = 8.dp)
+                                                                        ){
+                                                                                Text(
+                                                                                        text = "•",
+                                                                                        modifier = Modifier.padding(8.dp),
+                                                                                        color = Color(0xFF000000)
+                                                                                )
+                                                                                Text(text = item, color = Color(0xFF000000))
+
+
+                                                                        }
+
+                                                                }
+
+                                                        }
+
+                                                }
+
+                                                Spacer(modifier = Modifier.height(8.dp))
+
+
+                                        }
+                                }
+
+                        }
+                }
         }
 }
 
@@ -811,23 +1108,36 @@ fun RecordingScreen(
         val breathingClassification = viewModel.breathingClassification.collectAsState().value
         val classificationConfidence = viewModel.classificationConfidence.collectAsState().value
 
+        // Used For Assistant card
+        var showAssistant by remember { mutableStateOf(false) }
+        val tips = listOf("You can tap an NFC tag to auto-fill the form with patient data.",
+                "If this is a new patient, you can fill out the form and send the data to a new NFC tag.")
+
+
         Column(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
                 // Back button at the top
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start
+                ) {
                         BackButton(
                                 onBackClick = onBackClick,
                                 modifier = Modifier.padding(bottom = 8.dp)
                         )
                 }
 
+                Spacer(modifier = Modifier.height(20.dp))
+
                 // Display patient info
                 patientMetadata?.let {
                         Text(
                                 text = "Patient: ${it.id}",
                                 style = MaterialTheme.typography.titleMedium
+
+
                         )
                         Text(
                                 text = "Age: ${it.age}, Gender: ${it.gender}",
@@ -835,14 +1145,14 @@ fun RecordingScreen(
                         )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                //Spacer(modifier = Modifier.height(4.dp))
 
                 // Camera toggle button for tracking modes
                 val trackingMode = viewModel.currentTrackingMode.collectAsState().value
                 val isFrontCamera by viewModel.isFrontCamera.collectAsState()
 
                 if (trackingMode == TrackingMode.QR_TRACKING ||
-                                trackingMode == TrackingMode.YOLO_TRACKING
+                        trackingMode == TrackingMode.YOLO_TRACKING
                 ) {
                         Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -867,14 +1177,14 @@ fun RecordingScreen(
                                 }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp)) // Added more spacing below button
+                        Spacer(modifier = Modifier.height(4.dp)) // Added more spacing below button
                 }
 
                 // Tracking mode instructions
                 if (!isRecording && readyToRecord) {
                         // Show current tracking mode
                         Card(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth().height(84.dp),
                                 colors =
                                         CardDefaults.cardColors(
                                                 containerColor =
@@ -891,14 +1201,17 @@ fun RecordingScreen(
                                         )
                         ) {
                                 Column(
-                                        modifier = Modifier.padding(16.dp),
+                                        modifier = Modifier.fillMaxSize(),
                                         horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+
                                         Text(
                                                 text =
                                                         when (trackingMode) {
                                                                 TrackingMode.QR_TRACKING ->
                                                                         "🎯 QR Code Tracking Mode"
+
                                                                 TrackingMode.YOLO_TRACKING ->
                                                                         "🤖 YOLO Chest Tracking Mode"
                                                         },
@@ -908,6 +1221,7 @@ fun RecordingScreen(
                                                         when (trackingMode) {
                                                                 TrackingMode.QR_TRACKING ->
                                                                         Color(0xFF1976D2)
+
                                                                 TrackingMode.YOLO_TRACKING ->
                                                                         Color(0xFF7B1FA2)
                                                         }
@@ -920,10 +1234,12 @@ fun RecordingScreen(
                                                         when (trackingMode) {
                                                                 TrackingMode.QR_TRACKING ->
                                                                         "Position QR code on your chest and align it in the frame"
+
                                                                 TrackingMode.YOLO_TRACKING ->
                                                                         "Position camera towards your chest area for AI detection"
                                                         },
                                                 style = MaterialTheme.typography.bodyMedium,
+                                                color = Color(0xFF000000),
                                                 textAlign =
                                                         androidx.compose.ui.text.style.TextAlign
                                                                 .Center
@@ -932,7 +1248,7 @@ fun RecordingScreen(
                         }
 
                         // Start Recording button
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Button(
                                 onClick = onStartRecording,
                                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -946,18 +1262,18 @@ fun RecordingScreen(
                 // If recording, show breathing info
                 if (isRecording) {
                         // Display breathing phase info
-                        Text(
-                                text = "Recording Respiratory Data",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = Color(0xFF4CAF50)
-                        )
+                        /* Text(
+                        text = "Recording Respiratory Data",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color(0xFF4CAF50)
+                )*/
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        //Spacer(modifier = Modifier.height(16.dp))
 
                         // Only show breathing phase information during recording, not
                         // classification
                         Card(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth().height(84.dp),
                                 colors =
                                         CardDefaults.cardColors(
                                                 containerColor =
@@ -970,7 +1286,8 @@ fun RecordingScreen(
                                 ) {
                                         Text(
                                                 text = "Real-time Breathing",
-                                                style = MaterialTheme.typography.titleMedium
+                                                style = MaterialTheme.typography.titleMedium,
+                                                color = Color(0xFF000000)
                                         )
 
                                         Spacer(modifier = Modifier.height(8.dp))
@@ -986,11 +1303,13 @@ fun RecordingScreen(
                                 }
                         }
 
+                        //Make text and spacer height equal 74
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
                                 text = "Breathing Phase: $breathingPhase",
                                 style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.fillMaxWidth().height(20.dp),
                                 color =
                                         when (breathingPhase.lowercase()) {
                                                 "inhaling" -> Color(0xFF4CAF50)
@@ -999,34 +1318,75 @@ fun RecordingScreen(
                         )
                         Text(
                                 text = "Velocity: ${String.format("%.1f", velocity)}",
+                                modifier = Modifier.fillMaxWidth().height(18.dp),
                                 style = MaterialTheme.typography.bodyMedium
                         )
 
                         // Show data points count
                         Text(
                                 text = "Data points: ${respiratoryData.size}",
+                                modifier = Modifier.fillMaxWidth().height(18.dp),
                                 style = MaterialTheme.typography.bodyMedium
                         )
+
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Control buttons
                 Button(
                         onClick = onStopRecording,
                         modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))
+                        colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(
+                                        0xFFF44336
+                                )
+                        )
                 ) { Text(text = if (isRecording) "Stop Recording" else "Cancel and Return") }
 
                 Button(
                         onClick = onNewPatient,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
+                        colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(
+                                        0xFF9C27B0
+                                )
+                        )
                 ) { Text("New Patient") }
+
+                Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                ){
+                        Button(
+                                onClick = { showAssistant = true },
+
+                                colors =
+                                        ButtonDefaults.buttonColors(
+                                                containerColor =
+                                                        Color(0xFFFF0000) // Bright red
+                                        ),
+                                modifier = Modifier
+                                        .height(48.dp)
+                                        .width(66.dp)
+                                        .padding(end = 16.dp),
+
+
+                                ) {
+                                Text(
+                                        "?",
+                                        color = Color(0xFFFFFFFF),
+                                        textAlign = TextAlign.Center
+                                )
+                        }
+                }
 
                 // FIXED: Added bottom spacer to ensure button is fully visible
                 Spacer(modifier = Modifier.height(32.dp))
         }
+
+
+
 }
 
 @Composable
@@ -1220,6 +1580,7 @@ fun ResultsScreen(
                                 Text(
                                         text = "Breathing Assessment",
                                         style = MaterialTheme.typography.titleLarge,
+                                        color = Color(0xFF000000),
                                         modifier = Modifier.padding(bottom = 16.dp)
                                 )
 
@@ -1243,13 +1604,15 @@ fun ResultsScreen(
                                 Text(
                                         text =
                                                 "Confidence: ${(classificationConfidence * 100).toInt()}%",
-                                        style = MaterialTheme.typography.bodyLarge
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = Color(0xFF000000)
                                 )
 
                                 Text(
                                         text =
                                                 "Breathing Rate: ${String.format("%.2f", breathingRate)} breaths/min",
                                         style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF000000),
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(top = 8.dp)
                                 )
@@ -1259,6 +1622,7 @@ fun ResultsScreen(
                                         text =
                                                 "Breathing rate ${if (breathingRate >= 10f && breathingRate <= 24f) "within" else "outside"} normal range (10-24 breaths/minute)",
                                         style = MaterialTheme.typography.bodyMedium,
+                                        color = Color(0xFF000000),
                                         modifier = Modifier.padding(vertical = 8.dp)
                                 )
 
@@ -1284,6 +1648,7 @@ fun ResultsScreen(
                                                                 style =
                                                                         MaterialTheme.typography
                                                                                 .titleMedium,
+                                                                color = Color(0xFF000000),
                                                                 fontWeight = FontWeight.Bold,
                                                                 modifier =
                                                                         Modifier.padding(
@@ -1309,6 +1674,7 @@ fun ResultsScreen(
                                                                                         MaterialTheme
                                                                                                 .typography
                                                                                                 .bodyLarge,
+                                                                                color = Color(0xFF000000),
                                                                                 modifier =
                                                                                         Modifier.padding(
                                                                                                 end =
@@ -1447,7 +1813,9 @@ fun ResultsScreen(
                                                 Text(
                                                         text = "Recommendations",
                                                         style = MaterialTheme.typography.titleLarge,
-                                                        fontWeight = FontWeight.Bold
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF000000)
+
                                                 )
 
                                                 // Close button
@@ -1455,7 +1823,7 @@ fun ResultsScreen(
                                                         onClick = {
                                                                 showRecommendationsDialog = false
                                                         }
-                                                ) { Text("✕", fontSize = 24.sp) }
+                                                ) { Text("✕", fontSize = 24.sp, color = Color(0xFF000000)) }
                                         }
 
                                         Spacer(modifier = Modifier.height(8.dp))
@@ -1472,6 +1840,7 @@ fun ResultsScreen(
                                                                 style =
                                                                         MaterialTheme.typography
                                                                                 .bodyLarge,
+                                                                color = Color(0xFF000000),
                                                                 modifier =
                                                                         Modifier.padding(
                                                                                 end = 8.dp,
@@ -1482,7 +1851,8 @@ fun ResultsScreen(
                                                                 text = recommendation,
                                                                 style =
                                                                         MaterialTheme.typography
-                                                                                .bodyMedium
+                                                                                .bodyMedium,
+                                                                color = Color(0xFF000000)
                                                         )
                                                 }
                                         }
