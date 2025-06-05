@@ -93,6 +93,8 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation(libs.firebase.crashlytics.buildtools)
 
+    // Health Connect dependencies for heart rate and SpO₂ monitoring
+
     // Audio processing
     // implementation("com.github.linxz-coder:android-audio-wave:v1.0.0")
     implementation("androidx.media:media:1.7.0")
@@ -159,4 +161,38 @@ dependencies {
     configurations.all {
         exclude(group = "com.google.ai.edge.litert", module = "litert-api")
     }
+
+    // ViewModel and lifecycle
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    
+    // Camera and media
+    implementation("androidx.camera:camera-camera2:1.3.1")
+    implementation("androidx.camera:camera-lifecycle:1.3.1")
+    implementation("androidx.camera:camera-view:1.3.1")
+    implementation("androidx.media3:media3-exoplayer:1.2.1")
+    implementation("androidx.media3:media3-ui:1.2.1")
+    implementation("androidx.media3:media3-session:1.2.1")
+    
+    // Machine Learning and TensorFlow
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-metadata:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+    
+    // Google MLKit for pose detection
+    implementation("com.google.mlkit:pose-detection:18.0.0-beta3")
+    implementation("com.google.mlkit:pose-detection-accurate:18.0.0-beta3")
+    
+    // OpenCV for computer vision
+    implementation("org.opencv:opencv-android:4.8.0")
+    
+    // JSON processing
+    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
+    
+    // Networking (if needed)
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    
+    // Health Connect for vitals monitoring (stable version)
+    implementation("androidx.health.connect:connect-client:1.1.0-rc01")
 }

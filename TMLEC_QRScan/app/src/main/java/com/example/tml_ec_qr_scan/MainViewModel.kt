@@ -5,6 +5,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.time.Instant
 import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlinx.coroutines.Job
@@ -47,7 +48,8 @@ data class DiagnosisResult(
         val recommendations: List<String>,
         val detectedConditions: List<String> = emptyList(), // Specific conditions detected
         val amplitudeVariability: Float = 0f, // Amplitude variability metric
-        val durationVariability: Float = 0f // Duration variability metric
+        val durationVariability: Float = 0f, // Duration variability metric
+        val averageHealthData: HealthData = HealthData() // Session average health data
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -86,6 +88,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Patient metadata
     private val _patientMetadata = MutableStateFlow<PatientMetadata?>(null)
     val patientMetadata: StateFlow<PatientMetadata?> = _patientMetadata.asStateFlow()
+
+    // Health monitoring with Health Connect
+    private val healthConnectManager by lazy { HealthConnectManager(getApplication()) }
+    private val _currentHealthData = MutableStateFlow(HealthData())
+    val currentHealthData: StateFlow<HealthData> = _currentHealthData.asStateFlow()
+
+    private var healthDataCollectionJob: Job? = null
+    private var sessionStartTime: Instant? = null
 
     // Callback to complete calibration in MainActivity
     private var calibrationCompleter: (() -> Unit)? = null
@@ -198,6 +208,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Proceed to camera setup state without starting recording */
     fun proceedToCameraSetup() {
         _uiState.value = UiState.CameraSetup
+        // Start health data collection when patient proceeds to camera setup
+        startHealthDataCollection()
     }
 
     /** Navigate back to the previous screen based on current state */
@@ -218,6 +230,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("MainViewModel", "Stopping calibration and returning to CameraSetup")
                     _isCalibrating.value = false
                     _uiState.value = UiState.CameraSetup
+                    // Stop camera when manually returning to setup screen from calibration
+                    stopCamera()
+                    Log.d("MainViewModel", "🎥 Camera stopped after manual calibration exit")
                 }
                 is UiState.Recording -> {
                     // Stop recording and go back to camera setup
@@ -231,16 +246,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     _readyToRecord.value = false
                     _uiState.value = UiState.CameraSetup
+                    // Stop camera when returning to setup screen from recording
+                    stopCamera()
+                    Log.d("MainViewModel", "🎥 Camera stopped after recording exit")
                 }
                 is UiState.Results -> {
                     // Go back to camera setup for new recording
                     Log.d("MainViewModel", "Navigating back to CameraSetup from Results")
                     _uiState.value = UiState.CameraSetup
+                    // Stop camera when returning to setup screen from results
+                    stopCamera()
+                    Log.d("MainViewModel", "🎥 Camera stopped after results exit")
                 }
                 is UiState.DiseaseDetection -> {
                     // Go back to camera setup
                     Log.d("MainViewModel", "Navigating back to CameraSetup from DiseaseDetection")
                     _uiState.value = UiState.CameraSetup
+                    // Stop camera when returning to setup screen from disease detection
+                    stopCamera()
+                    Log.d("MainViewModel", "🎥 Camera stopped after disease detection exit")
                 }
             }
         }
@@ -259,6 +283,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Return to camera setup when calibration is done
                 Log.d("MainViewModel", "Changing state to CameraSetup (after calibration)")
                 _uiState.value = UiState.CameraSetup
+                // Stop camera when returning to setup screen after calibration
+                stopCamera()
+                Log.d("MainViewModel", "🎥 Camera stopped after calibration completion")
             }
         }
     }
@@ -459,6 +486,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _breathingClassification.value = "Unknown"
             _classificationConfidence.value = 0.0f
             breathingDataBuffer.clear()
+
+            // Clear health session data for new patient
+            clearHealthSessionData()
+
             _uiState.value = UiState.Initial
         }
     }
@@ -469,9 +500,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Update chest detection data for YOLO tracking */
-    //    fun updateChestDetection(detection: YoloChestDetector.ChestDetection?) {
-    //        viewModelScope.launch { _chestDetection.value = detection }
-    //    }
+    fun updateChestDetection(detection: YoloChestDetector.ChestDetection?) {
+        _chestDetection.value = detection
+    }
 
     /** Update breathing data with phase, confidence, and velocity */
     fun updateBreathingData(phase: Int, confidence: Float, velocity: Float) {
@@ -778,7 +809,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     ),
                             detectedConditions = detectedConditions,
                             amplitudeVariability = amplitudeVariation,
-                            durationVariability = durationVariability
+                            durationVariability = durationVariability,
+                            averageHealthData = getSessionAverageHealthData()
                     )
 
             // Update UI state with the diagnosis
@@ -876,7 +908,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                         ),
                                 detectedConditions = detectedConditions,
                                 amplitudeVariability = amplitudeVariation,
-                                durationVariability = durationVariability
+                                durationVariability = durationVariability,
+                                averageHealthData = getSessionAverageHealthData()
                         )
 
                 // Update UI with result
@@ -895,7 +928,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                                 listOf("Error during analysis: ${e.message}"),
                                         detectedConditions = emptyList(),
                                         amplitudeVariability = 0f,
-                                        durationVariability = 0f
+                                        durationVariability = 0f,
+                                        averageHealthData = HealthData()
                                 )
                         )
             }
@@ -1536,8 +1570,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // Function to start the camera
     fun startCamera() {
+        val wasStarted = _isCameraStarted.value
         _isCameraStarted.value = true
-        Log.d("MainViewModel", "Camera started")
+        Log.d(
+                "MainViewModel",
+                "🎥 startCamera() called - was started: $wasStarted, now started: ${_isCameraStarted.value}"
+        )
+        if (!wasStarted) {
+            Log.d("MainViewModel", "🎥 Camera state changed from false to true")
+        } else {
+            Log.d("MainViewModel", "🎥 Camera was already started")
+        }
+    }
+
+    // Function to stop the camera
+    fun stopCamera() {
+        val wasStarted = _isCameraStarted.value
+        _isCameraStarted.value = false
+        Log.d(
+                "MainViewModel",
+                "🎥 stopCamera() called - was started: $wasStarted, now started: ${_isCameraStarted.value}"
+        )
+        if (wasStarted) {
+            Log.d("MainViewModel", "🎥 Camera state changed from true to false")
+        } else {
+            Log.d("MainViewModel", "🎥 Camera was already stopped")
+        }
     }
 
     /** Returns information about which classification model is being used */
@@ -1663,13 +1721,83 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Update chest detection from YOLO detector */
-    fun updateChestDetection(detection: YoloChestDetector.ChestDetection?) {
-        _chestDetection.value = detection
+    // ========== Health Data Collection Methods ==========
+
+    /**
+     * Start health data collection from Health Connect Called when patient proceeds to camera setup
+     */
+    private fun startHealthDataCollection() {
+        viewModelScope.launch {
+            try {
+                // Check if Health Connect is available and we have permissions
+                if (!healthConnectManager.isAvailable()) {
+                    Log.w("HealthData", "Health Connect not available on this device")
+                    return@launch
+                }
+
+                if (!healthConnectManager.hasPermissions()) {
+                    Log.w("HealthData", "Health Connect permissions not granted")
+                    // You could request permissions here if needed
+                    return@launch
+                }
+
+                // Cancel any existing collection
+                healthDataCollectionJob?.cancel()
+
+                // Record session start time
+                sessionStartTime = Instant.now()
+
+                // Start collecting health data
+                healthDataCollectionJob =
+                        viewModelScope.launch {
+                            healthConnectManager.getHealthDataFlow().collect { healthData ->
+                                _currentHealthData.value = healthData
+                                Log.d(
+                                        "HealthData",
+                                        "Updated health data: HR=${healthData.getHeartRateDisplay()}, SpO₂=${healthData.getSpO2Display()}"
+                                )
+                            }
+                        }
+
+                Log.d("HealthData", "Health data collection started")
+            } catch (e: Exception) {
+                Log.e("HealthData", "Error starting health data collection", e)
+            }
+        }
+    }
+
+    /** Stop health data collection */
+    private fun stopHealthDataCollection() {
+        healthDataCollectionJob?.cancel()
+        healthDataCollectionJob = null
+        Log.d("HealthData", "Health data collection stopped")
+    }
+
+    /** Get session average health data for results display */
+    fun getSessionAverageHealthData(): HealthData {
+        return try {
+            val sessionStart = sessionStartTime ?: return HealthData()
+            val sessionEnd = Instant.now()
+
+            // This would get actual session data in a real implementation
+            // For now, return the current average from the manager
+            healthConnectManager.getSessionAverageHealthData()
+        } catch (e: Exception) {
+            Log.e("HealthData", "Error getting session average health data", e)
+            HealthData()
+        }
+    }
+
+    /** Clear health session data when starting a new patient */
+    private fun clearHealthSessionData() {
+        healthConnectManager.clearSessionData()
+        sessionStartTime = null
+        _currentHealthData.value = HealthData()
     }
 
     override fun onCleared() {
         super.onCleared()
+        stopHealthDataCollection()
         diseaseClassifier = null
         breathingClassifier = null
     }

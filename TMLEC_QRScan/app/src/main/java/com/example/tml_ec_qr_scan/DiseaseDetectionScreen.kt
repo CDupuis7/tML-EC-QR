@@ -18,7 +18,6 @@ import androidx.compose.ui.unit.dp
 
 /** Screen for respiratory disease detection using audio analysis */
 @Composable
-
 fun DiseaseDetectionScreen(
         viewModel: MainViewModel,
         onBackToMain: () -> Unit,
@@ -40,7 +39,6 @@ fun DiseaseDetectionScreen(
                                 modifier = Modifier.padding(bottom = 8.dp)
                         )
                 }
-
 
                 Text(
                         text = "Respiratory Health Analysis",
@@ -580,6 +578,16 @@ private fun ResultState(result: DiagnosisResult, onReset: () -> Unit) {
                                                                 )
                                                         }
                                                 }
+                                        }
+
+                                        // Session Health Data Display
+                                        if (result.averageHealthData.isValid()) {
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                SessionHealthDataDisplay(
+                                                        sessionHealthData =
+                                                                result.averageHealthData,
+                                                        modifier = Modifier.fillMaxWidth()
+                                                )
                                         }
                                 }
 

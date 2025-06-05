@@ -49,6 +49,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.OxygenSaturationRecord
+import androidx.lifecycle.lifecycleScope
 import boofcv.android.ConvertBitmap
 import boofcv.factory.fiducial.FactoryFiducial
 import boofcv.struct.image.GrayU8
@@ -62,6 +68,7 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: ExecutorService
@@ -86,17 +93,48 @@ class MainActivity : ComponentActivity() {
     // NFC support for patient data
     private lateinit var nfcManager: NFCManager
 
+    // Health Connect permission handling
+    private val healthConnectPermissions =
+            setOf(
+                    HealthPermission.getReadPermission(HeartRateRecord::class),
+                    HealthPermission.getReadPermission(OxygenSaturationRecord::class)
+            )
+
+    // Health Connect permission launcher
+    private val healthConnectPermissionLauncher =
+            registerForActivityResult(
+                    PermissionController.createRequestPermissionResultContract()
+            ) { granted ->
+                if (granted.containsAll(healthConnectPermissions)) {
+                    Log.d("HealthConnect", "✅ All Health Connect permissions granted")
+                    Toast.makeText(
+                                    this,
+                                    "Health Connect permissions granted! Now receiving real data from your smartwatch",
+                                    Toast.LENGTH_LONG
+                            )
+                            .show()
+                } else {
+                    Log.w("HealthConnect", "⚠️ Some Health Connect permissions were denied")
+                    Toast.makeText(
+                                    this,
+                                    "Some health permissions denied. Using simulated data as fallback.",
+                                    Toast.LENGTH_LONG
+                            )
+                            .show()
+                }
+            }
+
     // Calibration related variables
     private var isCalibrating = false
     private var calibrationStartTime = 0L
     private var calibrationData = mutableListOf<Float>()
     private var calibrationVelocityThresholds =
-        CalibrationThresholds(
-            inhaleThreshold = -8f,
-            exhaleThreshold = 8f,
-            pauseThresholdLow = -3f,
-            pauseThresholdHigh = 3f
-        )
+            CalibrationThresholds(
+                    inhaleThreshold = -8f,
+                    exhaleThreshold = 8f,
+                    pauseThresholdLow = -3f,
+                    pauseThresholdHigh = 3f
+            )
     private val CALIBRATION_DURATION_MS = 10000
 
     // Training mode flag
@@ -104,7 +142,7 @@ class MainActivity : ComponentActivity() {
 
     // Callback for image analysis
     private var qrCodeDetectionCallback: ((List<BoofCvQrDetection>, Float, Float, Int) -> Unit)? =
-        null
+            null
 
     // QR Grid calibration state
     private var isGridCalibrating = false
@@ -123,10 +161,21 @@ class MainActivity : ComponentActivity() {
         // Initialize components
         cameraExecutor = Executors.newSingleThreadExecutor()
         previewView =
-            PreviewView(this).apply {
-                implementationMode = PreviewView.ImplementationMode.PERFORMANCE
-                scaleType = PreviewView.ScaleType.FILL_CENTER
-            }
+                PreviewView(this).apply {
+                    implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    Log.d(
+                            "MainActivity",
+                            "🎥 PreviewView initialized with PERFORMANCE mode and FILL_CENTER scale"
+                    )
+                }
+
+        Log.d("MainActivity", "🎥 PreviewView details: $previewView")
+        Log.d(
+                "MainActivity",
+                "🎥 PreviewView implementation mode: ${previewView.implementationMode}"
+        )
+        Log.d("MainActivity", "🎥 PreviewView scale type: ${previewView.scaleType}")
 
         breathingClassifier = BreathingClassifier(this)
 
@@ -150,11 +199,14 @@ class MainActivity : ComponentActivity() {
         viewModel.setCalibrationCompleter { completeCalibration() }
         requestCameraPermissionIfNeeded()
 
+        // Initialize Health Connect and request permissions
+        checkAndRequestHealthConnectPermissions()
+
         setContent {
             com.example.tml_ec_qr_scan.ui.theme.TMLEC_QRScanTheme {
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
                 ) {
                     // State variables
                     var qrDetections by remember { mutableStateOf(emptyList<BoofCvQrDetection>()) }
@@ -165,15 +217,15 @@ class MainActivity : ComponentActivity() {
                     // Set up QR detection callback
                     DisposableEffect(Unit) {
                         val disposable =
-                            object {
-                                var active = true
-                            }
+                                object {
+                                    var active = true
+                                }
 
                         fun updateQrDetections(
-                            detections: List<BoofCvQrDetection>,
-                            width: Float,
-                            height: Float,
-                            rotation: Int
+                                detections: List<BoofCvQrDetection>,
+                                width: Float,
+                                height: Float,
+                                rotation: Int
                         ) {
                             if (disposable.active) {
                                 qrDetections = detections
@@ -193,52 +245,139 @@ class MainActivity : ComponentActivity() {
                     // Camera initialization effects
                     val uiState by viewModel.uiState.collectAsState()
                     LaunchedEffect(uiState) {
-                        if (uiState is UiState.Calibrating || uiState is UiState.Recording) {
-                            if (cameraProvider == null) {
-                                initializeCamera()
-                            } else {
-                                bindCameraUseCases()
+                        Log.d("MainActivity", "🎥 UI State changed to: $uiState")
+                        when (uiState) {
+                            is UiState.CameraSetup -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 CameraSetup state - camera not needed yet"
+                                )
+                                // Don't start camera automatically - wait for user to choose
+                                // tracking mode
+                            }
+                            is UiState.Calibrating -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 Calibrating state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
+                            }
+                            is UiState.Recording -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 Recording state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
+                            }
+                            is UiState.Initial -> {
+                                Log.d("MainActivity", "🎥 Initial state - camera not needed")
+                                // Stop camera to save resources when not needed
+                                viewModel.stopCamera()
+                            }
+                            is UiState.Results -> {
+                                Log.d("MainActivity", "🎥 Results state - camera not needed")
+                                // Stop camera to save resources when not needed
+                                viewModel.stopCamera()
+                            }
+                            is UiState.DiseaseDetection -> {
+                                Log.d(
+                                        "MainActivity",
+                                        "🎥 DiseaseDetection state - ensuring camera is active"
+                                )
+                                viewModel.startCamera()
+                                if (cameraProvider == null) {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider is null, calling initializeCamera()"
+                                    )
+                                    initializeCamera()
+                                } else {
+                                    Log.d(
+                                            "MainActivity",
+                                            "🎥 Camera provider exists, calling bindCameraUseCases()"
+                                    )
+                                    bindCameraUseCases()
+                                }
                             }
                         }
                     }
 
                     val isCameraStarted by viewModel.isCameraStarted.collectAsState()
                     LaunchedEffect(isCameraStarted) {
-                        if (isCameraStarted && uiState is UiState.CameraSetup) {
-                            if (cameraProvider == null) {
-                                initializeCamera()
-                            } else {
-                                bindCameraUseCases()
-                            }
+                        Log.d(
+                                "MainActivity",
+                                "🎥 Camera started state changed to: $isCameraStarted, current UI state: $uiState"
+                        )
+                        // Ensure camera is initialized when camera started state changes to true
+                        if (isCameraStarted && cameraProvider == null) {
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 Camera started but no provider, initializing..."
+                            )
+                            initializeCamera()
+                        } else if (isCameraStarted && cameraProvider != null) {
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 Camera started and provider exists, binding use cases..."
+                            )
+                            bindCameraUseCases()
                         }
                     }
 
                     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
                     LaunchedEffect(isFrontCamera) {
+                        Log.d("MainActivity", "🎥 Front camera state changed to: $isFrontCamera")
                         if (cameraProvider != null) {
+                            Log.d("MainActivity", "🎥 Rebinding camera for camera flip")
                             bindCameraUseCases()
                         }
                     }
 
                     // Main screen content
                     com.example.tml_ec_qr_scan.MainScreen(
-                        viewModel = viewModel,
-                        onStartRecording = { startRecording() },
-                        onStopRecording = { stopRecording() },
-                        onForceBreathingUpdate = { forceBreathingUpdate() },
-                        onSaveData = { saveData() },
-                        onNewPatient = { newPatient() },
-                        onStartCalibration = { startCalibration() },
-                        onToggleTrainingMode = { toggleTrainingMode() },
-                        onSaveGraph = { saveRespirationChartAsImage() },
-                        previewView = {
-                            CameraPreviewWithOverlays(
-                                qrDetections = qrDetections,
-                                imageWidth = imageWidth,
-                                imageHeight = imageHeight,
-                                rotationDegrees = rotationDegrees
-                            )
-                        }
+                            viewModel = viewModel,
+                            onStartRecording = { startRecording() },
+                            onStopRecording = { stopRecording() },
+                            onForceBreathingUpdate = { forceBreathingUpdate() },
+                            onSaveData = { saveData() },
+                            onNewPatient = { newPatient() },
+                            onStartCalibration = { startCalibration() },
+                            onToggleTrainingMode = { toggleTrainingMode() },
+                            onSaveGraph = { saveRespirationChartAsImage() },
+                            previewView = {
+                                CameraPreviewWithOverlays(
+                                        qrDetections = qrDetections,
+                                        imageWidth = imageWidth,
+                                        imageHeight = imageHeight,
+                                        rotationDegrees = rotationDegrees
+                                )
+                            }
                     )
                 }
             }
@@ -247,14 +386,39 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun CameraPreviewWithOverlays(
-        qrDetections: List<BoofCvQrDetection>,
-        imageWidth: Float,
-        imageHeight: Float,
-        rotationDegrees: Int
+            qrDetections: List<BoofCvQrDetection>,
+            imageWidth: Float,
+            imageHeight: Float,
+            rotationDegrees: Int
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Camera preview
-            AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            // Camera preview - ensure PreviewView is properly displayed
+            AndroidView(
+                    factory = { context ->
+                        Log.d(
+                                "MainActivity",
+                                "🎥 AndroidView factory called - creating/returning PreviewView"
+                        )
+                        previewView.apply {
+                            // Ensure proper scaling and implementation mode
+                            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            Log.d(
+                                    "MainActivity",
+                                    "🎥 PreviewView configured in AndroidView factory"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    update = { view ->
+                        Log.d("MainActivity", "🎥 AndroidView update called")
+                        // Ensure the surface provider is set
+                        if (preview != null) {
+                            preview?.setSurfaceProvider(view.surfaceProvider)
+                            Log.d("MainActivity", "🎥 Surface provider set in AndroidView update")
+                        }
+                    }
+            )
 
             // QR/YOLO overlays based on tracking mode
             val trackingMode by viewModel.currentTrackingMode.collectAsState()
@@ -262,11 +426,11 @@ class MainActivity : ComponentActivity() {
                 TrackingMode.QR_TRACKING -> {
                     if (qrDetections.isNotEmpty()) {
                         BoofCVQRCodeOverlay(
-                            qrDetections = qrDetections,
-                            imageWidth = imageWidth,
-                            imageHeight = imageHeight,
-                            rotationDegrees = rotationDegrees,
-                            modifier = Modifier.fillMaxSize()
+                                qrDetections = qrDetections,
+                                imageWidth = imageWidth,
+                                imageHeight = imageHeight,
+                                rotationDegrees = rotationDegrees,
+                                modifier = Modifier.fillMaxSize()
                         )
                     }
 
@@ -275,27 +439,26 @@ class MainActivity : ComponentActivity() {
                         QRAlignmentGuide(modifier = Modifier.fillMaxSize())
                     }
                 }
-
                 TrackingMode.YOLO_TRACKING -> {
                     // FIXED: During calibration, show QR overlay even in YOLO mode
                     if (isCalibrating && qrDetections.isNotEmpty()) {
                         BoofCVQRCodeOverlay(
-                            qrDetections = qrDetections,
-                            imageWidth = imageWidth,
-                            imageHeight = imageHeight,
-                            rotationDegrees = rotationDegrees,
-                            modifier = Modifier.fillMaxSize()
+                                qrDetections = qrDetections,
+                                imageWidth = imageWidth,
+                                imageHeight = imageHeight,
+                                rotationDegrees = rotationDegrees,
+                                modifier = Modifier.fillMaxSize()
                         )
                     } else if (!isCalibrating) {
                         // Normal YOLO mode when not calibrating
                         val chestDetection by viewModel.chestDetection.collectAsState()
                         chestDetection?.let { detection ->
                             ChestOverlay(
-                                chestDetection = detection,
-                                imageWidth = imageWidth,
-                                imageHeight = imageHeight,
-                                rotationDegrees = rotationDegrees,
-                                modifier = Modifier.fillMaxSize()
+                                    chestDetection = detection,
+                                    imageWidth = imageWidth,
+                                    imageHeight = imageHeight,
+                                    rotationDegrees = rotationDegrees,
+                                    modifier = Modifier.fillMaxSize()
                             )
                         }
                     }
@@ -311,66 +474,66 @@ class MainActivity : ComponentActivity() {
             // Show QR alignment instruction when in QR tracking mode and not recording
             if (trackingMode == TrackingMode.QR_TRACKING && showAlignmentGuide && !isRecording) {
                 Box(
-                    modifier =
-                        Modifier.align(Alignment.TopCenter)
-                            .padding(top = 32.dp, start = 16.dp, end = 16.dp)
-                            .background(
-                                Color.Black.copy(alpha = 0.7f),
-                                shape = MaterialTheme.shapes.small
-                            )
-                            .padding(12.dp)
+                        modifier =
+                                Modifier.align(Alignment.TopCenter)
+                                        .padding(top = 32.dp, start = 16.dp, end = 16.dp)
+                                        .background(
+                                                Color.Black.copy(alpha = 0.7f),
+                                                shape = MaterialTheme.shapes.small
+                                        )
+                                        .padding(12.dp)
                 ) {
                     Text(
-                        text = "🎯 Center your QR code on the red dot for optimal tracking",
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            text = "🎯 Center your QR code on the red dot for optimal tracking",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }
 
             if (breathingPhase != "Unknown") {
                 Box(
-                    modifier =
-                        Modifier.align(Alignment.TopEnd)
-                            .padding(
-                                top = 80.dp,
-                                end = 16.dp,
-                                start = 16.dp
-                            ) // Increased from 32dp to 80dp
-                            .background(
-                                Color.Black.copy(alpha = 0.7f),
-                                shape = MaterialTheme.shapes.small
-                            )
-                            .padding(8.dp)
+                        modifier =
+                                Modifier.align(Alignment.TopEnd)
+                                        .padding(
+                                                top = 80.dp,
+                                                end = 16.dp,
+                                                start = 16.dp
+                                        ) // Increased from 32dp to 80dp
+                                        .background(
+                                                Color.Black.copy(alpha = 0.7f),
+                                                shape = MaterialTheme.shapes.small
+                                        )
+                                        .padding(8.dp)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text =
-                                when (breathingPhase.lowercase()) {
-                                    "exhaling" -> " Exhaling"
-                                    "inhaling" -> "Inhaling"
-                                    "pause" -> "Pause"
-                                    else -> "🔄 Detecting movement..."
-                                },
-                            color =
-                                when (breathingPhase.lowercase()) {
-                                    "exhaling" -> Color(0xFF2196F3) // Blue for exhaling
-                                    "inhaling" -> Color(0xFF4CAF50) // Green for inhaling
-                                    "pause" -> Color(0xFFFFC107) // Yellow for pause
-                                    else -> Color(0xFFFFFFFF) // White for unknown
-                                },
-                            style =
-                                MaterialTheme.typography
-                                    .bodyLarge, // Changed from titleLarge
-                            fontWeight = FontWeight.Medium // Changed from Bold
+                                text =
+                                        when (breathingPhase.lowercase()) {
+                                            "exhaling" -> " Exhaling"
+                                            "inhaling" -> "Inhaling"
+                                            "pause" -> "Pause"
+                                            else -> "🔄 Detecting movement..."
+                                        },
+                                color =
+                                        when (breathingPhase.lowercase()) {
+                                            "exhaling" -> Color(0xFF2196F3) // Blue for exhaling
+                                            "inhaling" -> Color(0xFF4CAF50) // Green for inhaling
+                                            "pause" -> Color(0xFFFFC107) // Yellow for pause
+                                            else -> Color(0xFFFFFFFF) // White for unknown
+                                        },
+                                style =
+                                        MaterialTheme.typography
+                                                .bodyLarge, // Changed from titleLarge
+                                fontWeight = FontWeight.Medium // Changed from Bold
                         )
 
                         // Show velocity for debugging if needed
                         Text(
-                            text = "Movement: ${String.format("%.1f", currentVelocity)} px/s",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.bodySmall
+                                text = "Movement: ${String.format("%.1f", currentVelocity)} px/s",
+                                color = Color.White.copy(alpha = 0.8f),
+                                style = MaterialTheme.typography.bodySmall
                         )
 
                         // Recording status
@@ -389,14 +552,14 @@ class MainActivity : ComponentActivity() {
 
             // Add coordinate system debug info
             Box(
-                modifier =
-                    Modifier.align(Alignment.TopStart)
-                        .padding(top = 32.dp, start = 16.dp)
-                        .background(
-                            Color.Black.copy(alpha = 0.7f),
-                            shape = MaterialTheme.shapes.small
-                        )
-                        .padding(8.dp)
+                    modifier =
+                            Modifier.align(Alignment.TopStart)
+                                    .padding(top = 32.dp, start = 16.dp)
+                                    .background(
+                                            Color.Black.copy(alpha = 0.7f),
+                                            shape = MaterialTheme.shapes.small
+                                    )
+                                    .padding(8.dp)
             ) {
                 Column {
                     //                    Text(
@@ -422,11 +585,11 @@ class MainActivity : ComponentActivity() {
                     // Only show QR Count for QR tracking mode or during calibration
                     if (trackingMode == TrackingMode.QR_TRACKING || isCalibrating) {
                         Text(
-                            text = "QR Detected: ${qrDetections.size}",
-                            color =
-                                if (qrDetections.isNotEmpty()) Color(0xFF4CAF50)
-                                else Color(0xFFFF5252),
-                            style = MaterialTheme.typography.bodySmall
+                                text = "QR Detected: ${qrDetections.size}",
+                                color =
+                                        if (qrDetections.isNotEmpty()) Color(0xFF4CAF50)
+                                        else Color(0xFFFF5252),
+                                style = MaterialTheme.typography.bodySmall
                         )
                     }
                     //                    Text(
@@ -441,29 +604,29 @@ class MainActivity : ComponentActivity() {
             if (isRecording) {
                 val remainingTime by viewModel.recordingTimeRemaining.collectAsState()
                 Box(
-                    modifier =
-                        Modifier.align(Alignment.TopCenter)
-                            .padding(top = 32.dp)
-                            .background(
-                                color = Color.Black.copy(alpha = 0.7f),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                        modifier =
+                                Modifier.align(Alignment.TopCenter)
+                                        .padding(top = 32.dp)
+                                        .background(
+                                                color = Color.Black.copy(alpha = 0.7f),
+                                                shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .padding(horizontal = 20.dp, vertical = 10.dp)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "RECORDING TIME",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
+                                text = "RECORDING TIME",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = formatTime(remainingTime),
-                            color =
-                                if (remainingTime < 10) Color(0xFFFF5252)
-                                else Color(0xFF4CAF50),
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Bold
+                                text = formatTime(remainingTime),
+                                color =
+                                        if (remainingTime < 10) Color(0xFFFF5252)
+                                        else Color(0xFF4CAF50),
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -472,53 +635,53 @@ class MainActivity : ComponentActivity() {
             // FIXED: Special calibration mode indicator
             if (isCalibrating) {
                 Box(
-                    modifier =
-                        Modifier.align(Alignment.BottomCenter)
-                            .padding(bottom = 100.dp, start = 16.dp, end = 16.dp)
-                            .background(
-                                Color(0xFF4CAF50).copy(alpha = 0.9f),
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                            .padding(16.dp)
+                        modifier =
+                                Modifier.align(Alignment.BottomCenter)
+                                        .padding(bottom = 100.dp, start = 16.dp, end = 16.dp)
+                                        .background(
+                                                Color(0xFF4CAF50).copy(alpha = 0.9f),
+                                                shape = RoundedCornerShape(12.dp)
+                                        )
+                                        .padding(16.dp)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = "🎯 CALIBRATION MODE",
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                                text = "🎯 CALIBRATION MODE",
+                                color = Color.White,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Using QR Tracking for Calibration",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyMedium
+                                text = "Using QR Tracking for Calibration",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyMedium
                         )
                         if (trackingMode == TrackingMode.YOLO_TRACKING) {
                             Text(
-                                text = "(Temporarily overriding YOLO mode)",
-                                color = Color.White.copy(alpha = 0.8f),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                    text = "(Temporarily overriding YOLO mode)",
+                                    color = Color.White.copy(alpha = 0.8f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                             )
                         }
 
                         // Calibration progress
                         val remainingTime =
-                            if (isCalibrating) {
-                                kotlin.math.max(
-                                    0,
-                                    CALIBRATION_DURATION_MS -
-                                            (System.currentTimeMillis() -
-                                                    calibrationStartTime)
-                                ) / 1000
-                            } else {
-                                0
-                            }
+                                if (isCalibrating) {
+                                    kotlin.math.max(
+                                            0,
+                                            CALIBRATION_DURATION_MS -
+                                                    (System.currentTimeMillis() -
+                                                            calibrationStartTime)
+                                    ) / 1000
+                                } else {
+                                    0
+                                }
 
                         Text(
-                            text = "Time remaining: ${remainingTime}s",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodySmall
+                                text = "Time remaining: ${remainingTime}s",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
@@ -544,11 +707,11 @@ class MainActivity : ComponentActivity() {
 
         if (patientMetadata != null && respiratoryData.isNotEmpty()) {
             Toast.makeText(
-                this,
-                "Recording stopped. ${respiratoryData.size} data points collected.",
-                Toast.LENGTH_SHORT
-            )
-                .show()
+                            this,
+                            "Recording stopped. ${respiratoryData.size} data points collected.",
+                            Toast.LENGTH_SHORT
+                    )
+                    .show()
         }
     }
 
@@ -590,11 +753,11 @@ class MainActivity : ComponentActivity() {
         // Enhanced calibration start message
         val currentTrackingMode = viewModel.currentTrackingMode.value
         val calibrationMessage =
-            if (currentTrackingMode == TrackingMode.YOLO_TRACKING) {
-                "Calibration started using QR tracking (regardless of current mode). Please place QR code on chest and breathe normally for 10 seconds."
-            } else {
-                "Calibration started using QR tracking. Please breathe normally for 10 seconds."
-            }
+                if (currentTrackingMode == TrackingMode.YOLO_TRACKING) {
+                    "Calibration started using QR tracking (regardless of current mode). Please place QR code on chest and breathe normally for 10 seconds."
+                } else {
+                    "Calibration started using QR tracking. Please breathe normally for 10 seconds."
+                }
 
         Toast.makeText(this, calibrationMessage, Toast.LENGTH_LONG).show()
 
@@ -606,14 +769,14 @@ class MainActivity : ComponentActivity() {
         viewModel.updateCalibrationState(true)
 
         Handler(Looper.getMainLooper())
-            .postDelayed(
-                {
-                    if (isCalibrating) {
-                        completeCalibration()
-                    }
-                },
-                CALIBRATION_DURATION_MS.toLong()
-            )
+                .postDelayed(
+                        {
+                            if (isCalibrating) {
+                                completeCalibration()
+                            }
+                        },
+                        CALIBRATION_DURATION_MS.toLong()
+                )
     }
 
     private fun completeCalibration() {
@@ -625,11 +788,11 @@ class MainActivity : ComponentActivity() {
         val uniqueQrCodes = positionHistories.keys.size
 
         val completionMessage =
-            if (totalQrDetections > 0) {
-                "Calibration complete! Collected $totalQrDetections QR position samples from $uniqueQrCodes QR code(s). Ready for tracking."
-            } else {
-                "Calibration complete, but no QR codes were detected. Please ensure QR code is visible during calibration."
-            }
+                if (totalQrDetections > 0) {
+                    "Calibration complete! Collected $totalQrDetections QR position samples from $uniqueQrCodes QR code(s). Ready for tracking."
+                } else {
+                    "Calibration complete, but no QR codes were detected. Please ensure QR code is visible during calibration."
+                }
 
         Toast.makeText(this, completionMessage, Toast.LENGTH_LONG).show()
 
@@ -689,57 +852,57 @@ class MainActivity : ComponentActivity() {
 
             // Set up paint objects
             val titlePaint =
-                android.graphics.Paint().apply {
-                    color = android.graphics.Color.WHITE
-                    textSize = 36f
-                    isAntiAlias = true
-                    textAlign = android.graphics.Paint.Align.CENTER
-                }
+                    android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = 36f
+                        isAntiAlias = true
+                        textAlign = android.graphics.Paint.Align.CENTER
+                    }
 
             val axisPaint =
-                android.graphics.Paint().apply {
-                    color = android.graphics.Color.WHITE
-                    strokeWidth = 2f
-                    style = android.graphics.Paint.Style.STROKE
-                    isAntiAlias = true
-                }
+                    android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        strokeWidth = 2f
+                        style = android.graphics.Paint.Style.STROKE
+                        isAntiAlias = true
+                    }
 
             val gridPaint =
-                android.graphics.Paint().apply {
-                    color =
-                        android.graphics.Color.argb(
-                            51,
-                            255,
-                            255,
-                            255
-                        ) // White with alpha 0.2f
-                    strokeWidth = 1f
-                    style = android.graphics.Paint.Style.STROKE
-                    isAntiAlias = true
-                }
+                    android.graphics.Paint().apply {
+                        color =
+                                android.graphics.Color.argb(
+                                        51,
+                                        255,
+                                        255,
+                                        255
+                                ) // White with alpha 0.2f
+                        strokeWidth = 1f
+                        style = android.graphics.Paint.Style.STROKE
+                        isAntiAlias = true
+                    }
 
             val labelPaint =
-                android.graphics.Paint().apply {
-                    color = android.graphics.Color.WHITE
-                    textSize = 24f
-                    isAntiAlias = true
-                }
+                    android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = 24f
+                        isAntiAlias = true
+                    }
 
             val linePaint =
-                android.graphics.Paint().apply {
-                    strokeWidth = 6f // 1.5dp equivalent at higher resolution
-                    style = android.graphics.Paint.Style.STROKE
-                    isAntiAlias = true
-                    strokeCap = android.graphics.Paint.Cap.ROUND
-                }
+                    android.graphics.Paint().apply {
+                        strokeWidth = 6f // 1.5dp equivalent at higher resolution
+                        style = android.graphics.Paint.Style.STROKE
+                        isAntiAlias = true
+                        strokeCap = android.graphics.Paint.Cap.ROUND
+                    }
 
             // Draw title
             canvas.drawText("Respiratory Chart", width / 2f, 40f, titlePaint)
 
             // Calculate velocity scaling (matching RespirationChart logic)
             val maxVelocity =
-                respiratoryData.maxOfOrNull { kotlin.math.abs(it.velocity) }?.coerceAtLeast(10f)
-                    ?: 10f
+                    respiratoryData.maxOfOrNull { kotlin.math.abs(it.velocity) }?.coerceAtLeast(10f)
+                            ?: 10f
             val yPerVelocity = (chartHeight / 2) / maxVelocity
             val velocityStep = 10f
 
@@ -790,10 +953,10 @@ class MainActivity : ComponentActivity() {
             // Draw X-axis label
             labelPaint.textAlign = android.graphics.Paint.Align.CENTER
             canvas.drawText(
-                "Time (seconds)",
-                chartLeft + chartWidth / 2,
-                chartBottom + 35f,
-                labelPaint
+                    "Time (seconds)",
+                    chartLeft + chartWidth / 2,
+                    chartBottom + 35f,
+                    labelPaint
             )
 
             // Calculate data point positions and draw the chart
@@ -825,25 +988,25 @@ class MainActivity : ComponentActivity() {
                     val next = respiratoryData[i + 1]
 
                     val currentX =
-                        chartLeft +
-                                (current.timestamp - startTime) / timeRange.toFloat() *
-                                chartWidth
+                            chartLeft +
+                                    (current.timestamp - startTime) / timeRange.toFloat() *
+                                            chartWidth
                     val currentY = middleY - (current.velocity * yPerVelocity)
                     val nextX =
-                        chartLeft +
-                                (next.timestamp - startTime) / timeRange.toFloat() * chartWidth
+                            chartLeft +
+                                    (next.timestamp - startTime) / timeRange.toFloat() * chartWidth
                     val nextY = middleY - (next.velocity * yPerVelocity)
 
                     // Set line color based on breathing phase (exact same logic as
                     // RespirationChart)
                     val phase = current.breathingPhase.lowercase().trim()
                     linePaint.color =
-                        when (phase) {
-                            "inhaling" -> inhaleColor
-                            "exhaling" -> exhaleColor
-                            "pause" -> pauseColor
-                            else -> android.graphics.Color.GRAY
-                        }
+                            when (phase) {
+                                "inhaling" -> inhaleColor
+                                "exhaling" -> exhaleColor
+                                "pause" -> pauseColor
+                                else -> android.graphics.Color.GRAY
+                            }
 
                     // Draw line segment
                     canvas.drawLine(currentX, currentY, nextX, nextY, linePaint)
@@ -853,25 +1016,25 @@ class MainActivity : ComponentActivity() {
             // Draw legend (matching RespirationChart design exactly)
             val legendTop = chartBottom + 60f
             val legendPaint =
-                android.graphics.Paint().apply {
-                    color = android.graphics.Color.WHITE
-                    textSize = 28f
-                    isAntiAlias = true
-                }
+                    android.graphics.Paint().apply {
+                        color = android.graphics.Color.WHITE
+                        textSize = 28f
+                        isAntiAlias = true
+                    }
 
             val legendLinePaint =
-                android.graphics.Paint().apply {
-                    strokeWidth = 8f
-                    style = android.graphics.Paint.Style.STROKE
-                    isAntiAlias = true
-                }
+                    android.graphics.Paint().apply {
+                        strokeWidth = 8f
+                        style = android.graphics.Paint.Style.STROKE
+                        isAntiAlias = true
+                    }
 
             // Legend background (dark like RespirationChart)
             val legendBgPaint =
-                android.graphics.Paint().apply {
-                    color = android.graphics.Color.argb(230, 0, 0, 0) // Black with alpha 0.9f
-                    style = android.graphics.Paint.Style.FILL
-                }
+                    android.graphics.Paint().apply {
+                        color = android.graphics.Color.argb(230, 0, 0, 0) // Black with alpha 0.9f
+                        style = android.graphics.Paint.Style.FILL
+                    }
             canvas.drawRect(0f, legendTop - 20f, width.toFloat(), height.toFloat(), legendBgPaint)
 
             // Legend title
@@ -891,33 +1054,33 @@ class MainActivity : ComponentActivity() {
             // Exhaling legend
             legendLinePaint.color = exhaleColor
             canvas.drawLine(
-                30f + itemSpacing,
-                legendItemTop,
-                30f + itemSpacing + lineLength,
-                legendItemTop,
-                legendLinePaint
+                    30f + itemSpacing,
+                    legendItemTop,
+                    30f + itemSpacing + lineLength,
+                    legendItemTop,
+                    legendLinePaint
             )
             canvas.drawText(
-                "Exhaling",
-                30f + itemSpacing + lineLength + 15f,
-                legendItemTop + 10f,
-                legendPaint
+                    "Exhaling",
+                    30f + itemSpacing + lineLength + 15f,
+                    legendItemTop + 10f,
+                    legendPaint
             )
 
             // Pause legend
             legendLinePaint.color = pauseColor
             canvas.drawLine(
-                30f + itemSpacing * 2,
-                legendItemTop,
-                30f + itemSpacing * 2 + lineLength,
-                legendItemTop,
-                legendLinePaint
+                    30f + itemSpacing * 2,
+                    legendItemTop,
+                    30f + itemSpacing * 2 + lineLength,
+                    legendItemTop,
+                    legendLinePaint
             )
             canvas.drawText(
-                "Pause",
-                30f + itemSpacing * 2 + lineLength + 15f,
-                legendItemTop + 10f,
-                legendPaint
+                    "Pause",
+                    30f + itemSpacing * 2 + lineLength + 15f,
+                    legendItemTop + 10f,
+                    legendPaint
             )
 
             // Save the bitmap to gallery
@@ -926,7 +1089,7 @@ class MainActivity : ComponentActivity() {
             val fileName = "respiratory_chart_${formattedDate}.png"
 
             val imagesDir =
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
             val imageFile = File(imagesDir, fileName)
 
             imageFile.outputStream().use { out ->
@@ -935,14 +1098,14 @@ class MainActivity : ComponentActivity() {
 
             // Notify media scanner to add to gallery
             val mediaScanIntent =
-                android.content.Intent(android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
+                    android.content.Intent(android.content.Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
             mediaScanIntent.data = android.net.Uri.fromFile(imageFile)
             sendBroadcast(mediaScanIntent)
 
             Toast.makeText(this, "Graph saved to gallery: $fileName", Toast.LENGTH_LONG).show()
             Log.d(
-                "MainActivity",
-                "RespirationChart-style graph saved to: ${imageFile.absolutePath}"
+                    "MainActivity",
+                    "RespirationChart-style graph saved to: ${imageFile.absolutePath}"
             )
         } catch (e: Exception) {
             Log.e("MainActivity", "Error saving RespirationChart-style graph: ${e.message}", e)
@@ -959,106 +1122,131 @@ class MainActivity : ComponentActivity() {
     // Camera and detection functions
     private fun requestCameraPermissionIfNeeded() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
-            PackageManager.PERMISSION_GRANTED
+                        PackageManager.PERMISSION_GRANTED
         ) {
             val requestPermissionLauncher =
-                registerForActivityResult(
-                    ActivityResultContracts.RequestMultiplePermissions()
-                ) { permissions ->
-                    if (permissions[Manifest.permission.CAMERA] == true) {
-                        val currentState = viewModel.uiState.value
-                        if (currentState is UiState.CameraSetup ||
-                            currentState is UiState.Calibrating ||
-                            currentState is UiState.Recording
-                        ) {
-                            initializeCamera()
+                    registerForActivityResult(
+                            ActivityResultContracts.RequestMultiplePermissions()
+                    ) { permissions ->
+                        if (permissions[Manifest.permission.CAMERA] == true) {
+                            val currentState = viewModel.uiState.value
+                            if (currentState is UiState.CameraSetup ||
+                                            currentState is UiState.Calibrating ||
+                                            currentState is UiState.Recording
+                            ) {
+                                initializeCamera()
+                            }
+                        } else {
+                            Toast.makeText(this, "Camera permission is required", Toast.LENGTH_LONG)
+                                    .show()
                         }
-                    } else {
-                        Toast.makeText(this, "Camera permission is required", Toast.LENGTH_LONG)
-                            .show()
                     }
-                }
             requestPermissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
         }
     }
 
     private fun initializeCamera() {
+        Log.d("MainActivity", "🎥 initializeCamera() called")
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
-            PackageManager.PERMISSION_GRANTED
+                        PackageManager.PERMISSION_GRANTED
         ) {
+            Log.w("MainActivity", "🎥 Camera permission not granted, requesting...")
             requestCameraPermissionIfNeeded()
             return
         }
 
+        Log.d("MainActivity", "🎥 Camera permission granted, proceeding with initialization")
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener(
-            {
-                try {
-                    cameraProvider = cameraProviderFuture.get()
-                    bindCameraUseCases()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to initialize camera", e)
-                    Toast.makeText(
-                        this,
-                        "Failed to initialize camera: ${e.message}",
-                        Toast.LENGTH_LONG
-                    )
-                        .show()
-                }
-            },
-            ContextCompat.getMainExecutor(this)
+                {
+                    try {
+                        Log.d("MainActivity", "🎥 Camera provider future completed")
+                        cameraProvider = cameraProviderFuture.get()
+                        Log.d(
+                                "MainActivity",
+                                "🎥 Camera provider obtained successfully, calling bindCameraUseCases"
+                        )
+                        bindCameraUseCases()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "🎥 Failed to initialize camera", e)
+                        Toast.makeText(
+                                        this,
+                                        "Failed to initialize camera: ${e.message}",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                },
+                ContextCompat.getMainExecutor(this)
         )
     }
 
     private fun bindCameraUseCases() {
+        Log.d("MainActivity", "🎥 bindCameraUseCases() called")
         val cameraProvider = cameraProvider ?: return
 
         try {
+            Log.d("MainActivity", "🎥 Unbinding all previous camera use cases")
             cameraProvider.unbindAll()
 
+            Log.d("MainActivity", "🎥 Creating preview use case")
             preview =
-                Preview.Builder().build().also {
-                    it.setSurfaceProvider(previewView.surfaceProvider)
-                }
-
-            imageAnalyzer =
-                ImageAnalysis.Builder()
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-                    .also {
-                        it.setAnalyzer(cameraExecutor) { imageProxy ->
-                            processImage(imageProxy) { detections, width, height, rotation
-                                ->
-                                processDetections(detections, width, height, rotation)
-                                qrCodeDetectionCallback?.invoke(
-                                    detections,
-                                    width,
-                                    height,
-                                    rotation
-                                )
-                            }
-                        }
+                    Preview.Builder().build().also { previewUseCase ->
+                        Log.d("MainActivity", "🎥 Setting surface provider for preview")
+                        previewUseCase.setSurfaceProvider(previewView.surfaceProvider)
+                        Log.d("MainActivity", "🎥 Preview surface provider set successfully")
                     }
+
+            Log.d("MainActivity", "🎥 Creating image analyzer use case")
+            imageAnalyzer =
+                    ImageAnalysis.Builder()
+                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                            .build()
+                            .also {
+                                it.setAnalyzer(cameraExecutor) { imageProxy ->
+                                    processImage(imageProxy) { detections, width, height, rotation
+                                        ->
+                                        processDetections(detections, width, height, rotation)
+                                        qrCodeDetectionCallback?.invoke(
+                                                detections,
+                                                width,
+                                                height,
+                                                rotation
+                                        )
+                                    }
+                                }
+                                Log.d("MainActivity", "🎥 Image analyzer set")
+                            }
 
             val isFrontCamera = viewModel.isFrontCamera.value
             val cameraSelector =
-                if (isFrontCamera) {
-                    CameraSelector.DEFAULT_FRONT_CAMERA
-                } else {
-                    CameraSelector.DEFAULT_BACK_CAMERA
-                }
+                    if (isFrontCamera) {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    } else {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    }
 
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+            Log.d("MainActivity", "🎥 Using ${if (isFrontCamera) "front" else "back"} camera")
+            Log.d("MainActivity", "🎥 Binding camera to lifecycle")
+
+            val camera =
+                    cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+
+            Log.d("MainActivity", "🎥 Camera successfully bound to lifecycle")
+            Log.d("MainActivity", "🎥 Camera info: ${camera.cameraInfo}")
+            Log.d("MainActivity", "🎥 Preview use case: $preview")
+            Log.d("MainActivity", "🎥 PreviewView: $previewView")
+            Log.d("MainActivity", "🎥 PreviewView surface provider: ${previewView.surfaceProvider}")
         } catch (exc: Exception) {
-            Log.e(TAG, "Use case binding failed", exc)
+            Log.e(TAG, "🎥 Use case binding failed", exc)
             Toast.makeText(this, "Camera initialization failed: ${exc.message}", Toast.LENGTH_LONG)
-                .show()
+                    .show()
         }
     }
 
     private fun processImage(
-        imageProxy: ImageProxy,
-        callback: (List<BoofCvQrDetection>, Float, Float, Int) -> Unit
+            imageProxy: ImageProxy,
+            callback: (List<BoofCvQrDetection>, Float, Float, Int) -> Unit
     ) {
         try {
             val bitmap = convertImageProxyToBitmap(imageProxy) ?: return
@@ -1069,18 +1257,17 @@ class MainActivity : ComponentActivity() {
             // This ensures calibration establishes proper QR movement baselines for the main
             // application focus
             val effectiveTrackingMode =
-                if (isCalibrating) {
-                    TrackingMode.QR_TRACKING
-                } else {
-                    viewModel.currentTrackingMode.value
-                }
+                    if (isCalibrating) {
+                        TrackingMode.QR_TRACKING
+                    } else {
+                        viewModel.currentTrackingMode.value
+                    }
 
             when (effectiveTrackingMode) {
                 TrackingMode.QR_TRACKING -> {
                     val detections = detectQrCodesBoof(bitmap)
                     callback(detections, bitmap.width.toFloat(), bitmap.height.toFloat(), rotation)
                 }
-
                 TrackingMode.YOLO_TRACKING -> {
                     processYoloChestDetection(bitmap, rotation)
                     callback(emptyList(), bitmap.width.toFloat(), bitmap.height.toFloat(), rotation)
@@ -1091,13 +1278,13 @@ class MainActivity : ComponentActivity() {
             if (isCalibrating && System.currentTimeMillis() % 2000 < 50) {
                 Log.d("CalibrationMode", "🎯 CALIBRATION: Using QR tracking logic (forced)")
                 Log.d(
-                    "CalibrationMode",
-                    "Current tracking mode: ${viewModel.currentTrackingMode.value}"
+                        "CalibrationMode",
+                        "Current tracking mode: ${viewModel.currentTrackingMode.value}"
                 )
                 Log.d("CalibrationMode", "Effective tracking mode: $effectiveTrackingMode")
                 Log.d(
-                    "CalibrationMode",
-                    "Calibration time remaining: ${(CALIBRATION_DURATION_MS - (System.currentTimeMillis() - calibrationStartTime)) / 1000}s"
+                        "CalibrationMode",
+                        "Calibration time remaining: ${(CALIBRATION_DURATION_MS - (System.currentTimeMillis() - calibrationStartTime)) / 1000}s"
                 )
             }
         } catch (e: Exception) {
@@ -1139,10 +1326,10 @@ class MainActivity : ComponentActivity() {
 
             detector.detections.map { detection ->
                 val corners =
-                    (0 until detection.bounds.size()).map { i ->
-                        val pt = detection.bounds.get(i)
-                        Offset(pt.x.toFloat(), pt.y.toFloat())
-                    }
+                        (0 until detection.bounds.size()).map { i ->
+                            val pt = detection.bounds.get(i)
+                            Offset(pt.x.toFloat(), pt.y.toFloat())
+                        }
                 val centerX = corners.map { it.x }.average().toFloat()
                 val centerY = corners.map { it.y }.average().toFloat()
 
@@ -1165,25 +1352,25 @@ class MainActivity : ComponentActivity() {
                     val currentTime = System.currentTimeMillis()
                     chestTracker?.let { tracker ->
                         val breathingData =
-                            tracker.updateChestPositionDetailed(detection, currentTime)
+                                tracker.updateChestPositionDetailed(detection, currentTime)
                         breathingData?.let { data ->
                             val normalizedPhase =
-                                when (data.breathingPhase.lowercase().trim()) {
-                                    "inhaling" -> "inhaling"
-                                    "exhaling" -> "exhaling"
-                                    "pause" -> "pause"
-                                    else -> "pause"
-                                }
+                                    when (data.breathingPhase.lowercase().trim()) {
+                                        "inhaling" -> "inhaling"
+                                        "exhaling" -> "exhaling"
+                                        "pause" -> "pause"
+                                        else -> "pause"
+                                    }
 
                             viewModel.updateBreathingData(
-                                phase =
-                                    when (normalizedPhase) {
-                                        "inhaling" -> -1
-                                        "exhaling" -> 1
-                                        else -> 0
-                                    },
-                                confidence = 0.8f,
-                                velocity = data.velocity
+                                    phase =
+                                            when (normalizedPhase) {
+                                                "inhaling" -> -1
+                                                "exhaling" -> 1
+                                                else -> 0
+                                            },
+                                    confidence = 0.8f,
+                                    velocity = data.velocity
                             )
 
                             viewModel.updateCurrentBreathingPhase(normalizedPhase)
@@ -1203,10 +1390,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun processDetections(
-        detections: List<BoofCvQrDetection>,
-        width: Float,
-        height: Float,
-        rotation: Int
+            detections: List<BoofCvQrDetection>,
+            width: Float,
+            height: Float,
+            rotation: Int
     ) {
         if (isCalibrating || viewModel.isRecording.value) {
             val currentTime = System.currentTimeMillis()
@@ -1220,11 +1407,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun processCalibrationData(
-        detections: List<BoofCvQrDetection>,
-        width: Float,
-        height: Float,
-        rotation: Int,
-        currentTime: Long
+            detections: List<BoofCvQrDetection>,
+            width: Float,
+            height: Float,
+            rotation: Int,
+            currentTime: Long
     ) {
         if (currentTime - calibrationStartTime >= CALIBRATION_DURATION_MS) {
             isCalibrating = false
@@ -1239,11 +1426,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun processRecordingData(
-        detections: List<BoofCvQrDetection>,
-        width: Float,
-        height: Float,
-        rotation: Int,
-        currentTime: Long
+            detections: List<BoofCvQrDetection>,
+            width: Float,
+            height: Float,
+            rotation: Int,
+            currentTime: Long
     ) {
         if (detections.isNotEmpty()) {
             val detection = detections.first()
@@ -1252,25 +1439,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun processDetectionForData(
-        detection: BoofCvQrDetection,
-        width: Float,
-        height: Float,
-        rotation: Int,
-        currentTime: Long,
-        isRecording: Boolean
+            detection: BoofCvQrDetection,
+            width: Float,
+            height: Float,
+            rotation: Int,
+            currentTime: Long,
+            isRecording: Boolean
     ) {
         val key = detection.rawValue ?: "unknown"
 
         // Use rotation-aware breathing analysis
         val breathingAnalysis =
-            analyzeBreathingMovementWithRotation(
-                key,
-                detection.center,
-                rotation,
-                width,
-                height,
-                currentTime
-            )
+                analyzeBreathingMovementWithRotation(
+                        key,
+                        detection.center,
+                        rotation,
+                        width,
+                        height,
+                        currentTime
+                )
 
         val velocity = breathingAnalysis.velocity
         val breathingPhase = breathingAnalysis.phase
@@ -1282,66 +1469,56 @@ class MainActivity : ComponentActivity() {
             Log.d("RobustBreathing", "=== BREATHING ANALYSIS (ROTATION-AWARE) ===")
             Log.d("RobustBreathing", "Rotation: ${rotation}°")
             Log.d(
-                "RobustBreathing",
-                "Phase: $breathingPhase, Y-Velocity: ${String.format("%.2f", velocity)}"
+                    "RobustBreathing",
+                    "Phase: $breathingPhase, Y-Velocity: ${String.format("%.2f", velocity)}"
             )
             Log.d(
-                "RobustBreathing",
-                "Direction: ${breathingAnalysis.direction}, Confidence: ${
-                    String.format(
-                        "%.2f",
-                        confidence
-                    )
-                }"
+                    "RobustBreathing",
+                    "Direction: ${breathingAnalysis.direction}, Confidence: ${String.format("%.2f", confidence)}"
             )
             Log.d("RobustBreathing", "Trend: ${breathingAnalysis.movementTrend}")
             Log.d("RobustBreathing", "Amplitude: ${String.format("%.2f", amplitude)}")
         }
 
         viewModel.updateBreathingData(
-            phase =
-                when (breathingPhase) {
-                    "inhaling" -> -1
-                    "exhaling" -> 1
-                    else -> 0
-                },
-            confidence = confidence,
-            velocity = velocity
+                phase =
+                        when (breathingPhase) {
+                            "inhaling" -> -1
+                            "exhaling" -> 1
+                            else -> 0
+                        },
+                confidence = confidence,
+                velocity = velocity
         )
 
         if (isRecording) {
             val movementType =
-                when (breathingPhase) {
-                    "inhaling" -> "upward"
-                    "exhaling" -> "downward"
-                    else -> "stable"
-                }
+                    when (breathingPhase) {
+                        "inhaling" -> "upward"
+                        "exhaling" -> "downward"
+                        else -> "stable"
+                    }
 
             // Get the stabilized point for recording (after rotation transformation)
             val stabilizedPoint = smoothedCenters[key]?.center ?: detection.center
 
             val dataPoint =
-                RespiratoryDataPoint(
-                    timestamp = currentTime - recordingStartTime,
-                    position = stabilizedPoint,
-                    qrId = key,
-                    movement = movementType,
-                    breathingPhase = breathingPhase,
-                    amplitude = amplitude,
-                    velocity = velocity
-                )
+                    RespiratoryDataPoint(
+                            timestamp = currentTime - recordingStartTime,
+                            position = stabilizedPoint,
+                            qrId = key,
+                            movement = movementType,
+                            breathingPhase = breathingPhase,
+                            amplitude = amplitude,
+                            velocity = velocity
+                    )
 
             viewModel.addRespiratoryDataPoint(dataPoint)
 
             if (currentTime % 2000 < 50) {
                 Log.d(
-                    "ImprovedDataPoint",
-                    "Added: Phase=$breathingPhase, Y-Velocity=${
-                        String.format(
-                            "%.2f",
-                            velocity
-                        )
-                    }, Confidence=${String.format("%.2f", confidence)}"
+                        "ImprovedDataPoint",
+                        "Added: Phase=$breathingPhase, Y-Velocity=${String.format("%.2f", velocity)}, Confidence=${String.format("%.2f", confidence)}"
                 )
             }
             viewModel.addRespiratoryDataPoint(dataPoint)
@@ -1351,30 +1528,20 @@ class MainActivity : ComponentActivity() {
         if (currentTime % 2000 < 50) { // Log every 2 seconds
             Log.d("RealisticBreathing", "=== BREATHING VELOCITY DEBUG ===")
             Log.d(
-                "RealisticBreathing",
-                "Position change: ${
-                    String.format(
-                        "%.2f",
-                        detection.center.y - (smoothedCenters[key]?.center?.y ?: 0f)
-                    )
-                } pixels"
+                    "RealisticBreathing",
+                    "Position change: ${String.format("%.2f", detection.center.y - (smoothedCenters[key]?.center?.y ?: 0f))} pixels"
             )
             Log.d(
-                "RealisticBreathing",
-                "Time delta: ${
-                    String.format(
-                        "%.3f",
-                        (currentTime - (lastPhaseChangeTimestamp[key] ?: 0L)) / 1000f
-                    )
-                } seconds"
+                    "RealisticBreathing",
+                    "Time delta: ${String.format("%.3f", (currentTime - (lastPhaseChangeTimestamp[key] ?: 0L)) / 1000f)} seconds"
             )
             Log.d(
-                "RealisticBreathing",
-                "Raw velocity: ${String.format("%.2f", velocity)} pixels/sec"
+                    "RealisticBreathing",
+                    "Raw velocity: ${String.format("%.2f", velocity)} pixels/sec"
             )
             Log.d(
-                "RealisticBreathing",
-                "Scaled velocity: ${String.format("%.2f", velocity)} (used for phase)"
+                    "RealisticBreathing",
+                    "Scaled velocity: ${String.format("%.2f", velocity)} (used for phase)"
             )
             Log.d("RealisticBreathing", "Detected phase: $breathingPhase")
             Log.d("RealisticBreathing", "Amplitude: ${String.format("%.2f", amplitude)} pixels")
@@ -1383,10 +1550,10 @@ class MainActivity : ComponentActivity() {
 
     /** Transform QR coordinates based on camera rotation to ensure consistent vertical tracking */
     private fun transformQrCoordinatesForBreathing(
-        center: Offset,
-        rotationDegrees: Int,
-        imageWidth: Float,
-        imageHeight: Float
+            center: Offset,
+            rotationDegrees: Int,
+            imageWidth: Float,
+            imageHeight: Float
     ): Offset {
         // Transform coordinates to always track the "vertical" axis relative to the person
         // regardless of camera rotation
@@ -1395,17 +1562,14 @@ class MainActivity : ComponentActivity() {
                 // Camera rotated 90 degrees: X becomes Y, Y becomes inverted X
                 Offset(x = center.y, y = imageWidth - center.x)
             }
-
             180 -> {
                 // Camera rotated 180 degrees: Both X and Y are inverted
                 Offset(x = imageWidth - center.x, y = imageHeight - center.y)
             }
-
             270 -> {
                 // Camera rotated 270 degrees: X becomes inverted Y, Y becomes X
                 Offset(x = imageHeight - center.y, y = center.x)
             }
-
             else -> {
                 // No rotation or 0 degrees: Use coordinates as-is
                 center
@@ -1415,21 +1579,21 @@ class MainActivity : ComponentActivity() {
 
     /** Enhanced breathing movement analysis that accounts for camera rotation */
     private fun analyzeBreathingMovementWithRotation(
-        qrId: String,
-        rawCenter: Offset,
-        rotationDegrees: Int,
-        imageWidth: Float,
-        imageHeight: Float,
-        currentTime: Long
+            qrId: String,
+            rawCenter: Offset,
+            rotationDegrees: Int,
+            imageWidth: Float,
+            imageHeight: Float,
+            currentTime: Long
     ): BreathingAnalysis {
         // Transform coordinates to handle camera rotation
         val transformedCenter =
-            transformQrCoordinatesForBreathing(
-                rawCenter,
-                rotationDegrees,
-                imageWidth,
-                imageHeight
-            )
+                transformQrCoordinatesForBreathing(
+                        rawCenter,
+                        rotationDegrees,
+                        imageWidth,
+                        imageHeight
+                )
 
         // Create a TrackedPoint with transformed coordinates
         val trackedPoint = smoothedCenters[qrId]
@@ -1450,27 +1614,27 @@ class MainActivity : ComponentActivity() {
                 Log.d("RotationDebug", "Rotation: ${rotationDegrees}°")
                 Log.d("RotationDebug", "Raw center: (${rawCenter.x}, ${rawCenter.y})")
                 Log.d(
-                    "RotationDebug",
-                    "Transformed center: (${transformedCenter.x}, ${transformedCenter.y})"
+                        "RotationDebug",
+                        "Transformed center: (${transformedCenter.x}, ${transformedCenter.y})"
                 )
                 Log.d(
-                    "RotationDebug",
-                    "Stabilized center: (${stabilizedPoint.center.x}, ${stabilizedPoint.center.y})"
+                        "RotationDebug",
+                        "Stabilized center: (${stabilizedPoint.center.x}, ${stabilizedPoint.center.y})"
                 )
                 Log.d("RotationDebug", "Image size: ${imageWidth}x${imageHeight}")
                 Log.d("RotationDebug", "Delta X: $deltaX, Delta Y: $deltaY")
                 Log.d("RotationDebug", "Velocity X: $velocityX, Velocity Y: $velocityY")
                 Log.d(
-                    "RotationDebug",
-                    "Dominant Movement: ${if (kotlin.math.abs(velocityX) > kotlin.math.abs(velocityY)) "HORIZONTAL" else "VERTICAL"}"
+                        "RotationDebug",
+                        "Dominant Movement: ${if (kotlin.math.abs(velocityX) > kotlin.math.abs(velocityY)) "HORIZONTAL" else "VERTICAL"}"
                 )
                 Log.d(
-                    "RotationDebug",
-                    "Y Movement Direction: ${if (velocityY > 0) "DOWN (inhaling)" else "UP (exhaling)"}"
+                        "RotationDebug",
+                        "Y Movement Direction: ${if (velocityY > 0) "DOWN (inhaling)" else "UP (exhaling)"}"
                 )
                 Log.d(
-                    "RotationDebug",
-                    "Expected Breathing: ${if (velocityY > 4) "INHALING" else if (velocityY < -4) "EXHALING" else "PAUSE"}"
+                        "RotationDebug",
+                        "Expected Breathing: ${if (velocityY > 4) "INHALING" else if (velocityY < -4) "EXHALING" else "PAUSE"}"
                 )
             }
         }
@@ -1493,23 +1657,23 @@ class MainActivity : ComponentActivity() {
 
     // Data class to hold breathing analysis results
     private data class BreathingAnalysis(
-        val velocity: Float,
-        val phase: String,
-        val confidence: Float,
-        val amplitude: Float,
-        val direction: String,
-        val movementTrend: String
+            val velocity: Float,
+            val phase: String,
+            val confidence: Float,
+            val amplitude: Float,
+            val direction: String,
+            val movementTrend: String
     )
 
     // Enhanced position history for robust analysis with phase stability
     private data class PositionHistory(
-        val positions: MutableList<Pair<Long, Offset>> = mutableListOf(),
-        val velocities: MutableList<Float> =
-            mutableListOf(), // For your proven exponential smoothing
-        val phases: MutableList<String> = mutableListOf(),
-        var baselineY: Float = 0f,
-        var lastPhaseChange: Long = 0L,
-        var currentPhase: String = "pause" // Start with pause phase
+            val positions: MutableList<Pair<Long, Offset>> = mutableListOf(),
+            val velocities: MutableList<Float> =
+                    mutableListOf(), // For your proven exponential smoothing
+            val phases: MutableList<String> = mutableListOf(),
+            var baselineY: Float = 0f,
+            var lastPhaseChange: Long = 0L,
+            var currentPhase: String = "pause" // Start with pause phase
     )
 
     // Store position history for each QR code
@@ -1517,9 +1681,9 @@ class MainActivity : ComponentActivity() {
 
     /** STABLE: Improved breathing detection with temporal smoothing and hysteresis */
     private fun analyzeBreathingMovement(
-        qrId: String,
-        stabilizedPoint: TrackedPoint,
-        currentTime: Long
+            qrId: String,
+            stabilizedPoint: TrackedPoint,
+            currentTime: Long
     ): BreathingAnalysis {
 
         // Get or create position history
@@ -1535,18 +1699,18 @@ class MainActivity : ComponentActivity() {
         // Need sufficient data for stable analysis
         if (history.positions.size < 5) {
             return BreathingAnalysis(
-                velocity = 0f,
-                phase = "pause",
-                confidence = 0.5f,
-                amplitude = 0f,
-                direction = "stable",
-                movementTrend = "initializing"
+                    velocity = 0f,
+                    phase = "pause",
+                    confidence = 0.5f,
+                    amplitude = 0f,
+                    direction = "stable",
+                    movementTrend = "initializing"
             )
         }
 
         // Calculate velocity using YOUR PROVEN approach from old working code
         val recentPositions =
-            history.positions.takeLast(5) // Back to your original 5-point approach
+                history.positions.takeLast(5) // Back to your original 5-point approach
         val velocities = mutableListOf<Float>()
 
         for (i in 1 until recentPositions.size) {
@@ -1567,19 +1731,19 @@ class MainActivity : ComponentActivity() {
 
         // Apply your original exponential smoothing approach
         val avgVelocity =
-            if (velocities.isNotEmpty()) {
-                velocities.average().toFloat()
-            } else {
-                0f
-            }
+                if (velocities.isNotEmpty()) {
+                    velocities.average().toFloat()
+                } else {
+                    0f
+                }
 
         // Get previous velocity for your proven exponential smoothing
         val prevVelocity =
-            if (history.velocities.isNotEmpty()) {
-                history.velocities.last()
-            } else {
-                0f
-            }
+                if (history.velocities.isNotEmpty()) {
+                    history.velocities.last()
+                } else {
+                    0f
+                }
 
         // Apply YOUR PROVEN exponential smoothing (alpha = 0.7f from your old code)
         val alpha = 0.7f
@@ -1596,13 +1760,13 @@ class MainActivity : ComponentActivity() {
 
         // INFLECTION POINT detection for smoother turning points
         val hasDirectionChange =
-            if (velocities.size >= 2) {
-                val recent = velocities.takeLast(2)
-                // Check if velocity is crossing zero (direction change)
-                (recent[0] > 0 && recent[1] < 0) || (recent[0] < 0 && recent[1] > 0)
-            } else {
-                false
-            }
+                if (velocities.size >= 2) {
+                    val recent = velocities.takeLast(2)
+                    // Check if velocity is crossing zero (direction change)
+                    (recent[0] > 0 && recent[1] < 0) || (recent[0] < 0 && recent[1] > 0)
+                } else {
+                    false
+                }
 
         // Use more NATURAL scaling that preserves curve shape
         val naturalVelocity = scaledVelocity * 0.8f // Gentler scaling to preserve natural curves
@@ -1622,8 +1786,8 @@ class MainActivity : ComponentActivity() {
         // Enhanced logging for turning point detection
         if (hasDirectionChange && currentTime % 500 < 50) {
             Log.d(
-                "TurningPoint",
-                "🔄 DIRECTION CHANGE DETECTED: Velocity transitioning through zero"
+                    "TurningPoint",
+                    "🔄 DIRECTION CHANGE DETECTED: Velocity transitioning through zero"
             )
             Log.d("TurningPoint", "Recent velocities: ${velocities.takeLast(2)}")
             Log.d("TurningPoint", "Scaled velocity: ${String.format("%.2f", scaledVelocity)}")
@@ -1640,59 +1804,54 @@ class MainActivity : ComponentActivity() {
 
         // BREATHING PHASE DETECTION with DIRECT TRANSITIONS (no forced pause)
         val newPhase =
-            when (currentPhase) {
-                "inhaling" -> {
-                    when {
-                        // Stay inhaling if still moving up
-                        scaledVelocity > 2f -> "inhaling"
-                        // DIRECT transition to exhaling when moving down (no pause!)
-                        scaledVelocity <= -4f && canChangePhase -> "exhaling"
-                        // Only go to pause if velocity is truly minimal AND we've been in this
-                        // state
-                        scaledVelocity >= -2f &&
-                                scaledVelocity <= 2f &&
-                                timeSincePhaseChange > 1000L &&
-                                canChangePhase -> "pause"
-
-                        else -> "inhaling" // Stay in current phase during natural transition
+                when (currentPhase) {
+                    "inhaling" -> {
+                        when {
+                            // Stay inhaling if still moving up
+                            scaledVelocity > 2f -> "inhaling"
+                            // DIRECT transition to exhaling when moving down (no pause!)
+                            scaledVelocity <= -4f && canChangePhase -> "exhaling"
+                            // Only go to pause if velocity is truly minimal AND we've been in this
+                            // state
+                            scaledVelocity >= -2f &&
+                                    scaledVelocity <= 2f &&
+                                    timeSincePhaseChange > 1000L &&
+                                    canChangePhase -> "pause"
+                            else -> "inhaling" // Stay in current phase during natural transition
+                        }
+                    }
+                    "exhaling" -> {
+                        when {
+                            // Stay exhaling if still moving down
+                            scaledVelocity < -2f -> "exhaling"
+                            // DIRECT transition to inhaling when moving up (no pause!)
+                            scaledVelocity >= 4f && canChangePhase -> "inhaling"
+                            // Only go to pause if velocity is truly minimal AND we've been in this
+                            // state
+                            scaledVelocity >= -2f &&
+                                    scaledVelocity <= 2f &&
+                                    timeSincePhaseChange > 1000L &&
+                                    canChangePhase -> "pause"
+                            else -> "exhaling" // Stay in current phase during natural transition
+                        }
+                    }
+                    "pause" -> {
+                        when {
+                            // Exit pause when there's clear movement
+                            scaledVelocity >= 4f && canChangePhase -> "inhaling"
+                            scaledVelocity <= -4f && canChangePhase -> "exhaling"
+                            else -> "pause" // Stay in pause
+                        }
+                    }
+                    else -> {
+                        // Initial phase determination (no hysteresis)
+                        when {
+                            scaledVelocity >= 4f -> "inhaling"
+                            scaledVelocity <= -4f -> "exhaling"
+                            else -> "pause" // Only start with pause if truly no movement
+                        }
                     }
                 }
-
-                "exhaling" -> {
-                    when {
-                        // Stay exhaling if still moving down
-                        scaledVelocity < -2f -> "exhaling"
-                        // DIRECT transition to inhaling when moving up (no pause!)
-                        scaledVelocity >= 4f && canChangePhase -> "inhaling"
-                        // Only go to pause if velocity is truly minimal AND we've been in this
-                        // state
-                        scaledVelocity >= -2f &&
-                                scaledVelocity <= 2f &&
-                                timeSincePhaseChange > 1000L &&
-                                canChangePhase -> "pause"
-
-                        else -> "exhaling" // Stay in current phase during natural transition
-                    }
-                }
-
-                "pause" -> {
-                    when {
-                        // Exit pause when there's clear movement
-                        scaledVelocity >= 4f && canChangePhase -> "inhaling"
-                        scaledVelocity <= -4f && canChangePhase -> "exhaling"
-                        else -> "pause" // Stay in pause
-                    }
-                }
-
-                else -> {
-                    // Initial phase determination (no hysteresis)
-                    when {
-                        scaledVelocity >= 4f -> "inhaling"
-                        scaledVelocity <= -4f -> "exhaling"
-                        else -> "pause" // Only start with pause if truly no movement
-                    }
-                }
-            }
 
         // Update phase history if changed
         if (newPhase != currentPhase) {
@@ -1701,26 +1860,16 @@ class MainActivity : ComponentActivity() {
 
             // Enhanced logging for transition types
             if ((currentPhase == "inhaling" && newPhase == "exhaling") ||
-                (currentPhase == "exhaling" && newPhase == "inhaling")
+                            (currentPhase == "exhaling" && newPhase == "inhaling")
             ) {
                 Log.d(
-                    "DirectTransition",
-                    "🔄 DIRECT TRANSITION: $currentPhase -> $newPhase (velocity: ${
-                        String.format(
-                            "%.1f",
-                            scaledVelocity
-                        )
-                    }) - Natural breathing flow!"
+                        "DirectTransition",
+                        "🔄 DIRECT TRANSITION: $currentPhase -> $newPhase (velocity: ${String.format("%.1f", scaledVelocity)}) - Natural breathing flow!"
                 )
             } else {
                 Log.d(
-                    "PhaseChange",
-                    "PHASE CHANGE: $currentPhase -> $newPhase (velocity: ${
-                        String.format(
-                            "%.1f",
-                            scaledVelocity
-                        )
-                    })"
+                        "PhaseChange",
+                        "PHASE CHANGE: $currentPhase -> $newPhase (velocity: ${String.format("%.1f", scaledVelocity)})"
                 )
             }
         }
@@ -1729,31 +1878,31 @@ class MainActivity : ComponentActivity() {
         val velocityStrength = kotlin.math.abs(scaledVelocity) / 20f
         val phaseStability = kotlin.math.min(timeSincePhaseChange / 1000f, 2f) / 2f // Max 2 seconds
         val confidence =
-            (0.6f + velocityStrength * 0.2f + phaseStability * 0.2f).coerceIn(0.6f, 0.95f)
+                (0.6f + velocityStrength * 0.2f + phaseStability * 0.2f).coerceIn(0.6f, 0.95f)
 
         // Improved amplitude calculation
         val amplitude =
-            if (history.positions.size > 3) {
-                val recentPositions = history.positions.takeLast(10)
-                val yPositions = recentPositions.map { it.second.y }
-                val range = (yPositions.maxOrNull() ?: 0f) - (yPositions.minOrNull() ?: 0f)
-                (range * 0.6f).coerceAtMost(50f)
-            } else {
-                0f
-            }
+                if (history.positions.size > 3) {
+                    val recentPositions = history.positions.takeLast(10)
+                    val yPositions = recentPositions.map { it.second.y }
+                    val range = (yPositions.maxOrNull() ?: 0f) - (yPositions.minOrNull() ?: 0f)
+                    (range * 0.6f).coerceAtMost(50f)
+                } else {
+                    0f
+                }
 
         // Debug logging every 2 seconds with PAUSE FOCUS
         if (currentTime % 2000 < 100) {
             Log.d("RestoredBreathing", "=== RESTORED TO YOUR PROVEN APPROACH ===")
             Log.d(
-                "RestoredBreathing",
-                "Raw velocities: ${velocities.takeLast(3).map { String.format("%.1f", it) }}"
+                    "RestoredBreathing",
+                    "Raw velocities: ${velocities.takeLast(3).map { String.format("%.1f", it) }}"
             )
             Log.d("RestoredBreathing", "Average velocity: ${String.format("%.2f", avgVelocity)}")
             Log.d("RestoredBreathing", "Previous velocity: ${String.format("%.2f", prevVelocity)}")
             Log.d(
-                "RestoredBreathing",
-                "Smoothed velocity (α=0.7): ${String.format("%.2f", smoothedVelocity)}"
+                    "RestoredBreathing",
+                    "Smoothed velocity (α=0.7): ${String.format("%.2f", smoothedVelocity)}"
             )
             Log.d("RestoredBreathing", "Final velocity: ${String.format("%.2f", scaledVelocity)}")
             Log.d("RestoredBreathing", "Current phase: $newPhase (${timeSincePhaseChange}ms)")
@@ -1762,111 +1911,106 @@ class MainActivity : ComponentActivity() {
             // PAUSE DEBUGGING - show when pause is truly warranted
             if (newPhase == "pause") {
                 Log.d(
-                    "PauseDetection",
-                    "🟡 PAUSE DETECTED - Velocity: ${String.format("%.2f", scaledVelocity)}"
+                        "PauseDetection",
+                        "🟡 PAUSE DETECTED - Velocity: ${String.format("%.2f", scaledVelocity)}"
                 )
                 Log.d(
-                    "PauseDetection",
-                    "This pause was triggered after ${timeSincePhaseChange}ms of minimal movement"
+                        "PauseDetection",
+                        "This pause was triggered after ${timeSincePhaseChange}ms of minimal movement"
                 )
                 Log.d("PauseDetection", "Exit thresholds: inhaling >= 4.0, exhaling <= -4.0")
             } else if (scaledVelocity >= -2f && scaledVelocity <= 2f && timeSincePhaseChange < 1000L
             ) {
                 Log.d(
-                    "NaturalFlow",
-                    "⚡ AVOIDING PAUSE during natural transition (vel: ${
-                        String.format(
-                            "%.2f",
-                            scaledVelocity
-                        )
-                    }, time: ${timeSincePhaseChange}ms)"
+                        "NaturalFlow",
+                        "⚡ AVOIDING PAUSE during natural transition (vel: ${String.format("%.2f", scaledVelocity)}, time: ${timeSincePhaseChange}ms)"
                 )
                 Log.d("NaturalFlow", "Staying in $newPhase to allow natural breathing flow")
             }
         }
 
         return BreathingAnalysis(
-            velocity = scaledVelocity,
-            phase = newPhase,
-            confidence = confidence,
-            amplitude = amplitude,
-            direction =
-                when (newPhase) {
-                    "inhaling" -> "upward"
-                    "exhaling" -> "downward"
-                    else -> "stable"
-                },
-            movementTrend = newPhase
+                velocity = scaledVelocity,
+                phase = newPhase,
+                confidence = confidence,
+                amplitude = amplitude,
+                direction =
+                        when (newPhase) {
+                            "inhaling" -> "upward"
+                            "exhaling" -> "downward"
+                            else -> "stable"
+                        },
+                movementTrend = newPhase
         )
     }
 
     private fun stabilizeQrPosition(
-        currentCenter: Offset,
-        trackedPoint: TrackedPoint?,
-        currentTime: Long
+            currentCenter: Offset,
+            trackedPoint: TrackedPoint?,
+            currentTime: Long
     ): TrackedPoint {
         val lockingThreshold = 15f // Back to your original value
         val stabilityThreshold = 0.3f // Back to your original value
 
         if (trackedPoint == null) {
             return TrackedPoint(
-                center = currentCenter,
-                lastUpdateTime = currentTime,
-                velocity = Offset.Zero,
-                isLocked = false,
-                initialPosition = currentCenter
+                    center = currentCenter,
+                    lastUpdateTime = currentTime,
+                    velocity = Offset.Zero,
+                    isLocked = false,
+                    initialPosition = currentCenter
             )
         }
 
         val initialPos = trackedPoint.initialPosition ?: currentCenter
         val distanceFromInitial =
-            sqrt(
-                (currentCenter.x - initialPos.x).pow(2) +
-                        (currentCenter.y - initialPos.y).pow(2)
-            )
+                sqrt(
+                        (currentCenter.x - initialPos.x).pow(2) +
+                                (currentCenter.y - initialPos.y).pow(2)
+                )
 
         // Use YOUR PROVEN stabilization approach from old working code
         val alpha = 0.6f // Your original proven value
 
         val stabilizedCenter =
-            if (distanceFromInitial < lockingThreshold && trackedPoint.isLocked) {
-                Offset(
-                    x = trackedPoint.center.x * alpha + currentCenter.x * (1 - alpha),
-                    y = trackedPoint.center.y * alpha + currentCenter.y * (1 - alpha)
-                )
-            } else {
-                currentCenter // Your original approach - no smoothing when not locked
-            }
+                if (distanceFromInitial < lockingThreshold && trackedPoint.isLocked) {
+                    Offset(
+                            x = trackedPoint.center.x * alpha + currentCenter.x * (1 - alpha),
+                            y = trackedPoint.center.y * alpha + currentCenter.y * (1 - alpha)
+                    )
+                } else {
+                    currentCenter // Your original approach - no smoothing when not locked
+                }
 
         val timeDelta = (currentTime - trackedPoint.lastUpdateTime) / 1000f
         val velocity =
-            if (timeDelta > 0) {
-                Offset(
-                    x = (stabilizedCenter.x - trackedPoint.center.x) / timeDelta,
-                    y = (stabilizedCenter.y - trackedPoint.center.y) / timeDelta
-                )
-            } else {
-                Offset.Zero
-            }
+                if (timeDelta > 0) {
+                    Offset(
+                            x = (stabilizedCenter.x - trackedPoint.center.x) / timeDelta,
+                            y = (stabilizedCenter.y - trackedPoint.center.y) / timeDelta
+                    )
+                } else {
+                    Offset.Zero
+                }
 
         // Use YOUR PROVEN locking mechanism
         val shouldLock =
-            velocity.getDistance() < stabilityThreshold ||
-                    (trackedPoint.isLocked && distanceFromInitial < lockingThreshold * 1.5f)
+                velocity.getDistance() < stabilityThreshold ||
+                        (trackedPoint.isLocked && distanceFromInitial < lockingThreshold * 1.5f)
 
         return TrackedPoint(
-            center = stabilizedCenter,
-            lastUpdateTime = currentTime,
-            velocity = velocity,
-            isLocked = shouldLock,
-            initialPosition = trackedPoint.initialPosition ?: currentCenter
+                center = stabilizedCenter,
+                lastUpdateTime = currentTime,
+                velocity = velocity,
+                isLocked = shouldLock,
+                initialPosition = trackedPoint.initialPosition ?: currentCenter
         )
     }
 
     private fun saveRespiratoryData(
-        context: Context,
-        data: List<RespiratoryDataPoint>,
-        metadata: PatientMetadata
+            context: Context,
+            data: List<RespiratoryDataPoint>,
+            metadata: PatientMetadata
     ) {
         if (data.isEmpty()) {
             Toast.makeText(context, "No respiratory data to save", Toast.LENGTH_SHORT).show()
@@ -1886,12 +2030,12 @@ class MainActivity : ComponentActivity() {
 
             val fileName = "respiratory_data_${metadata.id}_$formattedDate.csv"
             val csvFile =
-                File(
-                    Environment.getExternalStoragePublicDirectory(
-                        Environment.DIRECTORY_DOWNLOADS
-                    ),
-                    fileName
-                )
+                    File(
+                            Environment.getExternalStoragePublicDirectory(
+                                    Environment.DIRECTORY_DOWNLOADS
+                            ),
+                            fileName
+                    )
 
             // Calculate breathing metrics for the summary
             val metrics = calculateBreathingMetrics(data)
@@ -1918,23 +2062,23 @@ class MainActivity : ComponentActivity() {
 
                 // Write column headers
                 writer.write(
-                    "Relative Time (ms),QR ID,X,Y,Movement Direction,Breathing Phase,Amplitude,Velocity,Patient ID,Age,Gender,Health Status\n"
+                        "Relative Time (ms),QR ID,X,Y,Movement Direction,Breathing Phase,Amplitude,Velocity,Patient ID,Age,Gender,Health Status\n"
                 )
 
                 // Write data rows with relative timestamps for better readability
                 data.forEach { point ->
                     val relativeTime = point.timestamp - startTime
                     writer.write(
-                        "${relativeTime},${point.qrId},${point.position.x},${point.position.y}," +
-                                "${point.movement},${point.breathingPhase},${point.amplitude},${point.velocity}," +
-                                "${metadata.id},${metadata.age},${metadata.gender},${metadata.healthStatus}\n"
+                            "${relativeTime},${point.qrId},${point.position.x},${point.position.y}," +
+                                    "${point.movement},${point.breathingPhase},${point.amplitude},${point.velocity}," +
+                                    "${metadata.id},${metadata.age},${metadata.gender},${metadata.healthStatus}\n"
                     )
                 }
             }
 
             Log.d(
-                "RespiratoryTracking",
-                "Successfully saved ${data.size} data points to ${csvFile.absolutePath}"
+                    "RespiratoryTracking",
+                    "Successfully saved ${data.size} data points to ${csvFile.absolutePath}"
             )
             runOnUiThread {
                 Toast.makeText(context, "Saved data to ${csvFile.name}", Toast.LENGTH_LONG).show()
@@ -1943,7 +2087,7 @@ class MainActivity : ComponentActivity() {
             Log.e("RespiratoryTracking", "Error saving data: ${e.message}", e)
             runOnUiThread {
                 Toast.makeText(context, "Error saving data: ${e.message}", Toast.LENGTH_SHORT)
-                    .show()
+                        .show()
             }
         }
     }
@@ -1970,16 +2114,16 @@ class MainActivity : ComponentActivity() {
         val breathCount = countBreathCyclesFromData(data)
 
         Log.d(
-            "RespiratoryTracking",
-            "Breathing Analysis (CSV): Rate=$breathingRate, Count=$breathCount, Data points=${data.size}"
+                "RespiratoryTracking",
+                "Breathing Analysis (CSV): Rate=$breathingRate, Count=$breathCount, Data points=${data.size}"
         )
 
         return BreathingMetrics(
-            breathingRate = breathingRate,
-            averageAmplitude = averageAmplitude,
-            maxAmplitude = maxAmplitude,
-            minAmplitude = minAmplitude,
-            breathCount = breathCount
+                breathingRate = breathingRate,
+                averageAmplitude = averageAmplitude,
+                maxAmplitude = maxAmplitude,
+                minAmplitude = minAmplitude,
+                breathCount = breathCount
         )
     }
 
@@ -2010,8 +2154,8 @@ class MainActivity : ComponentActivity() {
             } else {
                 // Determine dominant phase for this window
                 val dominantPhase =
-                    currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key
-                        ?: "pause"
+                        currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key
+                                ?: "pause"
 
                 timeWindows.add(Pair(currentWindowStart, dominantPhase))
 
@@ -2025,7 +2169,7 @@ class MainActivity : ComponentActivity() {
         // Add final window if not empty
         if (currentWindowPhases.isNotEmpty()) {
             val dominantPhase =
-                currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key ?: "pause"
+                    currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key ?: "pause"
             timeWindows.add(Pair(currentWindowStart, dominantPhase))
         }
 
@@ -2041,14 +2185,14 @@ class MainActivity : ComponentActivity() {
 
         Log.d("CSV_BreathingRate", "Phase distribution: $phaseDistribution")
         Log.d(
-            "CSV_BreathingRate",
-            "Pause percentage: $pausePercentage (${pausePhases}/${totalWindows})"
+                "CSV_BreathingRate",
+                "Pause percentage: $pausePercentage (${pausePhases}/${totalWindows})"
         )
 
         // If majority of phases are pause (>80%) and minimal inhaling/exhaling, report actual low
         // rate
         if (pausePercentage > 0.8f && (!hasInhalingPhases || !hasExhalingPhases)) {
-            Log.d("CSV_BreathingRate", "DETECTED NO BREATHING: ${pausePercentage * 100}% pauses")
+            Log.d("CSV_BreathingRate", "DETECTED NO BREATHING: ${pausePercentage*100}% pauses")
             return 0f // Report 0 breaths per minute for no breathing
         }
 
@@ -2100,8 +2244,8 @@ class MainActivity : ComponentActivity() {
             // Assume approximately 2 phase changes per cycle
             cycleCount = kotlin.math.max(1, phaseChanges / 2)
             Log.d(
-                "CSV_BreathingRate",
-                "No cycles detected, estimated $cycleCount cycles from $phaseChanges phase changes"
+                    "CSV_BreathingRate",
+                    "No cycles detected, estimated $cycleCount cycles from $phaseChanges phase changes"
             )
         }
 
@@ -2113,15 +2257,15 @@ class MainActivity : ComponentActivity() {
 
         // If the rate seems implausible, use a default value
         val finalRate =
-            if (breathingRate < 5f || breathingRate > 40f) {
-                Log.d(
-                    "CSV_BreathingRate",
-                    "Calculated rate ($breathingRate) outside physiological range, using default"
-                )
-                16f // Default to middle of normal range
-            } else {
-                breathingRate
-            }
+                if (breathingRate < 5f || breathingRate > 40f) {
+                    Log.d(
+                            "CSV_BreathingRate",
+                            "Calculated rate ($breathingRate) outside physiological range, using default"
+                    )
+                    16f // Default to middle of normal range
+                } else {
+                    breathingRate
+                }
 
         Log.d("CSV_BreathingRate", "Raw breathing rate: $breathingRate breaths/min")
         Log.d("CSV_BreathingRate", "FINAL CSV RATE: $finalRate breaths/min")
@@ -2150,8 +2294,8 @@ class MainActivity : ComponentActivity() {
                 currentWindowPhases.add(point.breathingPhase.lowercase())
             } else {
                 val dominantPhase =
-                    currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key
-                        ?: "pause"
+                        currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key
+                                ?: "pause"
                 timeWindows.add(Pair(currentWindowStart, dominantPhase))
 
                 currentWindowStart = point.timestamp
@@ -2163,7 +2307,7 @@ class MainActivity : ComponentActivity() {
         // Add final window if not empty
         if (currentWindowPhases.isNotEmpty()) {
             val dominantPhase =
-                currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key ?: "pause"
+                    currentWindowPhases.groupBy { it }.maxByOrNull { it.value.size }?.key ?: "pause"
             timeWindows.add(Pair(currentWindowStart, dominantPhase))
         }
 
@@ -2205,22 +2349,22 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun BoofCVQRCodeOverlay(
-        qrDetections: List<BoofCvQrDetection>,
-        imageWidth: Float,
-        imageHeight: Float,
-        rotationDegrees: Int,
-        modifier: Modifier = Modifier
+            qrDetections: List<BoofCvQrDetection>,
+            imageWidth: Float,
+            imageHeight: Float,
+            rotationDegrees: Int,
+            modifier: Modifier = Modifier
     ) {
         Canvas(modifier = modifier.fillMaxSize()) {
             val viewWidth = size.width
             val viewHeight = size.height
 
             val (width, height) =
-                if (rotationDegrees % 180 == 90) {
-                    Pair(imageHeight, imageWidth)
-                } else {
-                    Pair(imageWidth, imageHeight)
-                }
+                    if (rotationDegrees % 180 == 90) {
+                        Pair(imageHeight, imageWidth)
+                    } else {
+                        Pair(imageWidth, imageHeight)
+                    }
 
             val scaleX = viewWidth / width
             val scaleY = viewHeight / height
@@ -2231,20 +2375,20 @@ class MainActivity : ComponentActivity() {
 
             qrDetections.forEach { detection ->
                 val transformedCorners =
-                    detection.corners.map { corner ->
-                        val rotatedCorner =
-                            when (rotationDegrees) {
-                                90 -> Offset(corner.y, imageWidth - corner.x)
-                                180 -> Offset(imageWidth - corner.x, imageHeight - corner.y)
-                                270 -> Offset(imageHeight - corner.y, corner.x)
-                                else -> corner
-                            }
+                        detection.corners.map { corner ->
+                            val rotatedCorner =
+                                    when (rotationDegrees) {
+                                        90 -> Offset(corner.y, imageWidth - corner.x)
+                                        180 -> Offset(imageWidth - corner.x, imageHeight - corner.y)
+                                        270 -> Offset(imageHeight - corner.y, corner.x)
+                                        else -> corner
+                                    }
 
-                        Offset(
-                            x = offsetX + rotatedCorner.x * scale,
-                            y = offsetY + rotatedCorner.y * scale
-                        )
-                    }
+                            Offset(
+                                    x = offsetX + rotatedCorner.x * scale,
+                                    y = offsetY + rotatedCorner.y * scale
+                            )
+                        }
 
                 // Calculate DYNAMIC stroke width based on QR code size
                 val qrWidth = kotlin.math.abs(transformedCorners[0].x - transformedCorners[2].x)
@@ -2256,36 +2400,35 @@ class MainActivity : ComponentActivity() {
 
                 for (i in transformedCorners.indices) {
                     drawLine(
-                        color = Color.Green,
-                        start = transformedCorners[i],
-                        end = transformedCorners[(i + 1) % transformedCorners.size],
-                        strokeWidth = dynamicStrokeWidth // Dynamic width based on QR size
+                            color = Color.Green,
+                            start = transformedCorners[i],
+                            end = transformedCorners[(i + 1) % transformedCorners.size],
+                            strokeWidth = dynamicStrokeWidth // Dynamic width based on QR size
                     )
                 }
 
                 val center =
-                    when (rotationDegrees) {
-                        90 -> Offset(detection.center.y, imageWidth - detection.center.x)
-                        180 ->
-                            Offset(
-                                imageWidth - detection.center.x,
-                                imageHeight - detection.center.y
-                            )
-
-                        270 -> Offset(imageHeight - detection.center.y, detection.center.x)
-                        else -> detection.center
-                    }
+                        when (rotationDegrees) {
+                            90 -> Offset(detection.center.y, imageWidth - detection.center.x)
+                            180 ->
+                                    Offset(
+                                            imageWidth - detection.center.x,
+                                            imageHeight - detection.center.y
+                                    )
+                            270 -> Offset(imageHeight - detection.center.y, detection.center.x)
+                            else -> detection.center
+                        }
 
                 val screenCenter =
-                    Offset(x = offsetX + center.x * scale, y = offsetY + center.y * scale)
+                        Offset(x = offsetX + center.x * scale, y = offsetY + center.y * scale)
 
                 // Dynamic center dot size based on QR code size (8-20f range)
                 val dynamicCenterRadius = (qrSize / 50f).coerceIn(8f, 20f)
 
                 drawCircle(
-                    color = Color.Red.copy(alpha = 0.9f),
-                    radius = dynamicCenterRadius, // Dynamic radius based on QR size
-                    center = screenCenter
+                        color = Color.Red.copy(alpha = 0.9f),
+                        radius = dynamicCenterRadius, // Dynamic radius based on QR size
+                        center = screenCenter
                 )
             }
         }
@@ -2297,16 +2440,16 @@ class MainActivity : ComponentActivity() {
         gridCalibrationPositions.clear()
 
         Toast.makeText(
-            this,
-            "QR Grid Calibration: Position 3x3 QR codes on chest. Center QR should be at breathing center.",
-            Toast.LENGTH_LONG
-        )
-            .show()
+                        this,
+                        "QR Grid Calibration: Position 3x3 QR codes on chest. Center QR should be at breathing center.",
+                        Toast.LENGTH_LONG
+                )
+                .show()
 
         Log.d("QRGridCalibration", "🎯 Starting 3x3 QR Grid Calibration")
 
         Handler(Looper.getMainLooper())
-            .postDelayed({ completeQrGridCalibration() }, GRID_CALIBRATION_DURATION)
+                .postDelayed({ completeQrGridCalibration() }, GRID_CALIBRATION_DURATION)
     }
 
     /** Complete QR grid calibration and provide positioning feedback */
@@ -2321,40 +2464,38 @@ class MainActivity : ComponentActivity() {
                 // Good grid setup
                 val centerQr = findCenterQrCode(gridCalibrationPositions)
                 Toast.makeText(
-                    this,
-                    "✅ Excellent QR Grid Setup! Detected $detectedQrCount/9 codes. Center QR: $centerQr",
-                    Toast.LENGTH_LONG
-                )
-                    .show()
+                                this,
+                                "✅ Excellent QR Grid Setup! Detected $detectedQrCount/9 codes. Center QR: $centerQr",
+                                Toast.LENGTH_LONG
+                        )
+                        .show()
 
                 Log.d("QRGridCalibration", "✅ EXCELLENT grid setup: $detectedQrCount QRs detected")
                 logGridPositions()
             }
-
             detectedQrCount >= 4 -> {
                 // Acceptable grid setup
                 Toast.makeText(
-                    this,
-                    "⚠️ Acceptable QR Grid Setup. Detected $detectedQrCount/9 codes. Try to position all 9 for best tracking.",
-                    Toast.LENGTH_LONG
-                )
-                    .show()
+                                this,
+                                "⚠️ Acceptable QR Grid Setup. Detected $detectedQrCount/9 codes. Try to position all 9 for best tracking.",
+                                Toast.LENGTH_LONG
+                        )
+                        .show()
 
                 Log.d(
-                    "QRGridCalibration",
-                    "⚠️ ACCEPTABLE grid setup: $detectedQrCount QRs detected"
+                        "QRGridCalibration",
+                        "⚠️ ACCEPTABLE grid setup: $detectedQrCount QRs detected"
                 )
                 logGridPositions()
             }
-
             else -> {
                 // Poor grid setup
                 Toast.makeText(
-                    this,
-                    "❌ Poor QR Grid Setup. Only $detectedQrCount/9 codes detected. Please reposition QR codes and try again.",
-                    Toast.LENGTH_SHORT
-                )
-                    .show()
+                                this,
+                                "❌ Poor QR Grid Setup. Only $detectedQrCount/9 codes detected. Please reposition QR codes and try again.",
+                                Toast.LENGTH_SHORT
+                        )
+                        .show()
 
                 Log.d("QRGridCalibration", "❌ POOR grid setup: only $detectedQrCount QRs detected")
             }
@@ -2372,12 +2513,12 @@ class MainActivity : ComponentActivity() {
 
         // Find QR code closest to centroid (likely the center one)
         return positions
-            .minByOrNull {
-                val dx = it.value.x - centroid.x
-                val dy = it.value.y - centroid.y
-                kotlin.math.sqrt(dx * dx + dy * dy)
-            }
-            ?.key
+                .minByOrNull {
+                    val dx = it.value.x - centroid.x
+                    val dy = it.value.y - centroid.y
+                    kotlin.math.sqrt(dx * dx + dy * dy)
+                }
+                ?.key
     }
 
     /** Log grid positions for debugging */
@@ -2394,21 +2535,21 @@ class MainActivity : ComponentActivity() {
             // Calculate grid stability
             val positions = gridCalibrationPositions.values
             val avgDistance =
-                positions
-                    .map { pos1 ->
-                        positions
-                            .map { pos2 ->
-                                val dx = pos1.x - pos2.x
-                                val dy = pos1.y - pos2.y
-                                kotlin.math.sqrt(dx * dx + dy * dy)
+                    positions
+                            .map { pos1 ->
+                                positions
+                                        .map { pos2 ->
+                                            val dx = pos1.x - pos2.x
+                                            val dy = pos1.y - pos2.y
+                                            kotlin.math.sqrt(dx * dx + dy * dy)
+                                        }
+                                        .average()
                             }
                             .average()
-                    }
-                    .average()
 
             Log.d(
-                "QRGridCalibration",
-                "Grid stability (avg distance): ${avgDistance.toInt()} pixels"
+                    "QRGridCalibration",
+                    "Grid stability (avg distance): ${avgDistance.toInt()} pixels"
             )
 
             if (avgDistance > 200) {
@@ -2436,33 +2577,33 @@ class MainActivity : ComponentActivity() {
 
             // Horizontal line
             drawLine(
-                color = crosshairColor,
-                start = Offset(centerX - crosshairLength, centerY),
-                end = Offset(centerX + crosshairLength, centerY),
-                strokeWidth = 3f
+                    color = crosshairColor,
+                    start = Offset(centerX - crosshairLength, centerY),
+                    end = Offset(centerX + crosshairLength, centerY),
+                    strokeWidth = 3f
             )
 
             // Vertical line
             drawLine(
-                color = crosshairColor,
-                start = Offset(centerX, centerY - crosshairLength),
-                end = Offset(centerX, centerY + crosshairLength),
-                strokeWidth = 3f
+                    color = crosshairColor,
+                    start = Offset(centerX, centerY - crosshairLength),
+                    end = Offset(centerX, centerY + crosshairLength),
+                    strokeWidth = 3f
             )
 
             // Center dot
             drawCircle(
-                color = Color.Red.copy(alpha = 0.9f),
-                radius = 8f,
-                center = Offset(centerX, centerY)
+                    color = Color.Red.copy(alpha = 0.9f),
+                    radius = 8f,
+                    center = Offset(centerX, centerY)
             )
 
             // Outer circle guide
             drawCircle(
-                color = Color.White.copy(alpha = 0.6f),
-                radius = 60f,
-                center = Offset(centerX, centerY),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+                    color = Color.White.copy(alpha = 0.6f),
+                    radius = 60f,
+                    center = Offset(centerX, centerY),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
             )
         }
     }
@@ -2515,7 +2656,7 @@ class MainActivity : ComponentActivity() {
 
         // Only process NFC intents
         if (action == android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED ||
-            action == android.nfc.NfcAdapter.ACTION_TAG_DISCOVERED
+                        action == android.nfc.NfcAdapter.ACTION_TAG_DISCOVERED
         ) {
 
             Log.d("MainActivity", "📖 NFC intent detected")
@@ -2527,36 +2668,31 @@ class MainActivity : ComponentActivity() {
 
                 // Convert NFC data to PatientMetadata and update ViewModel
                 val patientMetadata =
-                    PatientMetadata(
-                        id = patientData.id,
-                        age = patientData.age,
-                        gender = patientData.gender,
-                        healthStatus = patientData.healthStatus,
-                        additionalNotes =
-                            "Loaded from NFC tag at ${
-                                java.text.SimpleDateFormat(
-                                    "yyyy-MM-dd HH:mm:ss",
-                                    java.util.Locale.getDefault()
-                                ).format(java.util.Date(patientData.timestamp))
-                            }"
-                    )
+                        PatientMetadata(
+                                id = patientData.id,
+                                age = patientData.age,
+                                gender = patientData.gender,
+                                healthStatus = patientData.healthStatus,
+                                additionalNotes =
+                                        "Loaded from NFC tag at ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(patientData.timestamp))}"
+                        )
 
                 // Update the ViewModel with the NFC data
                 viewModel.updatePatientMetadata(patientMetadata)
 
                 // Show success message to user
                 Toast.makeText(
-                    this,
-                    "✅ Patient data loaded from NFC tag!\nPatient: ${patientData.id}",
-                    Toast.LENGTH_LONG
-                )
-                    .show()
+                                this,
+                                "✅ Patient data loaded from NFC tag!\nPatient: ${patientData.id}",
+                                Toast.LENGTH_LONG
+                        )
+                        .show()
 
                 Log.d("MainActivity", "✅ Patient metadata updated from NFC tag")
             } else {
                 Log.w("MainActivity", "⚠️ No patient data found in NFC tag")
                 Toast.makeText(this, "⚠️ No patient data found in NFC tag", Toast.LENGTH_SHORT)
-                    .show()
+                        .show()
             }
         }
     }
@@ -2572,6 +2708,85 @@ class MainActivity : ComponentActivity() {
             block()
         } finally {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    /** Check and request Health Connect permissions for real health data access */
+    private fun checkAndRequestHealthConnectPermissions() {
+        lifecycleScope.launch {
+            try {
+                // Check if Health Connect is available
+                when (HealthConnectClient.getSdkStatus(this@MainActivity)) {
+                    HealthConnectClient.SDK_AVAILABLE -> {
+                        Log.d("HealthConnect", "✅ Health Connect is available")
+
+                        val healthConnectClient = HealthConnectClient.getOrCreate(this@MainActivity)
+                        val grantedPermissions =
+                                healthConnectClient.permissionController.getGrantedPermissions()
+
+                        if (healthConnectPermissions.all { it in grantedPermissions }) {
+                            Log.d(
+                                    "HealthConnect",
+                                    "✅ All Health Connect permissions already granted"
+                            )
+                            Toast.makeText(
+                                            this@MainActivity,
+                                            "✅ Health Connect ready! Receiving real data from your smartwatch",
+                                            Toast.LENGTH_SHORT
+                                    )
+                                    .show()
+                        } else {
+                            Log.d("HealthConnect", "🔐 Requesting Health Connect permissions...")
+                            // Request missing permissions
+                            healthConnectPermissionLauncher.launch(healthConnectPermissions)
+                        }
+                    }
+                    HealthConnectClient.SDK_UNAVAILABLE -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Health Connect not available - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect unavailable. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                    HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Health Connect needs update - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect needs update. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                    else -> {
+                        Log.w(
+                                "HealthConnect",
+                                "⚠️ Unknown Health Connect status - using simulated data"
+                        )
+                        Toast.makeText(
+                                        this@MainActivity,
+                                        "Health Connect status unknown. Using simulated health data.",
+                                        Toast.LENGTH_LONG
+                                )
+                                .show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("HealthConnect", "❌ Error checking Health Connect permissions", e)
+                Toast.makeText(
+                                this@MainActivity,
+                                "Error accessing Health Connect. Using simulated health data.",
+                                Toast.LENGTH_LONG
+                        )
+                        .show()
+            }
         }
     }
 }
