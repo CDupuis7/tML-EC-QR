@@ -547,9 +547,10 @@ fun InitialScreen(
                                         }
 
                         // FIXED: Reduced spacing before buttons
-                        Spacer(modifier = Modifier.height(8.dp)) // REDUCED: Much smaller spacer
+                         // REDUCED: Much smaller spacer
                                 }.padding(start = 8.dp), color = if (isEnabled) Color.Unspecified else Color.Gray)
                         }
+                        Spacer(modifier = Modifier.height(8.dp))
                         if (isOtherChecked){
                                 OutlinedTextField(
                                         value = otherConditionText,
