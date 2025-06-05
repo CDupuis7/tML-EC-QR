@@ -41,7 +41,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.motionEventSpy
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -307,10 +309,12 @@ class MainActivity : ComponentActivity() {
 
             // Show QR alignment instruction when in QR tracking mode and not recording
             if (trackingMode == TrackingMode.QR_TRACKING && showAlignmentGuide && !isRecording) {
+
+
                 Box(
                         modifier =
                                 Modifier.align(Alignment.TopCenter)
-                                        .padding(top = 32.dp, start = 16.dp, end = 16.dp)
+                                        .padding(top = 50.dp, start = 16.dp, end = 16.dp)
                                         .background(
                                                 Color.Black.copy(alpha = 0.7f),
                                                 shape = MaterialTheme.shapes.small
@@ -387,7 +391,7 @@ class MainActivity : ComponentActivity() {
             // Add coordinate system debug info
             Box(
                     modifier =
-                            Modifier.align(Alignment.TopStart)
+                            Modifier.align(Alignment.BottomStart)
                                     .padding(top = 32.dp, start = 16.dp)
                                     .background(
                                             Color.Black.copy(alpha = 0.7f),
@@ -449,7 +453,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                                text = "RECORDING TIME",
+                                text = "RECORDING DATA",
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
@@ -2408,10 +2412,10 @@ class MainActivity : ComponentActivity() {
             )
 
             // Outer circle guide
-            drawCircle(
-                    color = Color.White.copy(alpha = 0.6f),
-                    radius = 60f,
-                    center = Offset(centerX, centerY),
+            drawRect(
+                    color = Color.Red.copy(alpha = 0.9f),
+                    size = Size(150f,150f),
+                    topLeft = Offset(centerX - 75f, centerY - 75f),
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
             )
         }
