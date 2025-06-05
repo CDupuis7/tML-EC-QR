@@ -85,6 +85,12 @@ dependencies {
     implementation 'androidx.camera:camera-lifecycle:1.3.1'
     implementation 'androidx.camera:camera-view:1.3.1'
 
+    // Guava ListenableFuture for CameraX
+    implementation 'com.google.guava:guava:31.1-android'
+
+    // Health Connect dependencies for real health data integration
+    implementation "androidx.health.connect:connect-client:1.1.0-alpha07"
+
     // Testing
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

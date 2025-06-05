@@ -65,6 +65,9 @@ fun MainScreen(
         val patientMetadata by viewModel.patientMetadata.collectAsState()
         val isCameraStarted by viewModel.isCameraStarted.collectAsState()
 
+        // Health data collection
+        val currentHealthData by viewModel.currentHealthData.collectAsState()
+
         // Provide ViewModel to nested composables
         CompositionLocalProvider(LocalViewModel provides viewModel) {
                 Column(modifier = Modifier.fillMaxSize()) {
@@ -145,6 +148,7 @@ fun MainScreen(
                                                         velocity = velocity,
                                                         respiratoryData = respiratoryData,
                                                         patientMetadata = patientMetadata,
+                                                        currentHealthData = currentHealthData,
                                                         onStartRecording = {
                                                                 viewModel.startRecording()
                                                         },
@@ -229,27 +233,38 @@ fun InitialScreen(
                 }
         }
 
-        Box(modifier = Modifier.fillMaxSize()) {
 
-                // FIXED: Added scrollable column with proper spacing
-                Column(
+        // FIXED: Added scrollable column with proper spacing
+        Column(
+                modifier =
+                        Modifier.fillMaxSize()
+                                .verticalScroll(
+                                        rememberScrollState()
+                                ) // ADDED: Scrolling capability
+                                .padding(16.dp)
+                                .padding(top = 8.dp), // REDUCED: Minimal top padding
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement =
+                        Arrangement.spacedBy(12.dp) // REDUCED: Smaller spacing between elements
+        ) {
+
+                // FIXED: App title with reduced spacing
+                Text(
+                        text = "RespirAPPtion",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color(0xFF2196F3),
                         modifier =
-                                Modifier.fillMaxSize()
-                                        .verticalScroll(
-                                                rememberScrollState()
-                                        ) // ADDED: Scrolling capability
-                                        .padding(16.dp)
-                                        .padding(top = 8.dp), // REDUCED: Minimal top padding
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement =
-                                Arrangement.spacedBy(12.dp) // REDUCED: Smaller spacing between elements
-                ) {
+                                Modifier.padding(
+                                        top = 18.dp,
+                                )
+                )
+                Text(
+                        text = "(A Respiratory Health Monitoring App)",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF9C27B0),
+                        modifier = Modifier.padding(bottom = 4.dp) // REDUCED: Much smaller padding
+                )
 
-                        // FIXED: App title with reduced spacing
-                        Text(
-                                text = "RespirAPPtion",
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = Color(0xFF2196F3),
 
                                 modifier =
                                         Modifier.padding(
@@ -1079,6 +1094,7 @@ fun RecordingScreen(
         velocity: Float,
         respiratoryData: List<RespiratoryDataPoint>,
         patientMetadata: PatientMetadata?,
+        currentHealthData: HealthData,
         onStartRecording: () -> Unit,
         onStopRecording: () -> Unit,
         onForceBreathingUpdate: () -> Unit,
@@ -1140,16 +1156,25 @@ fun RecordingScreen(
                 ) {
                         Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                                // Camera toggle button
                                 Button(
                                         onClick = { viewModel.toggleCamera() },
-                                        modifier = Modifier.padding(8.dp),
+                                        modifier = Modifier.weight(1f),
                                         colors =
                                                 ButtonDefaults.buttonColors(
                                                         containerColor = Color(0xFF607D8B)
                                                 )
                                 ) { Text("📷 ${if (isFrontCamera) "Back" else "Front"} Camera") }
+
+                                // Health data display in the same row
+                                Box(modifier = Modifier.weight(1f)) {
+                                        HealthDataDisplay(
+                                                healthData = currentHealthData,
+                                                modifier = Modifier.fillMaxWidth()
+                                        )
+                                }
                         }
 
                         Spacer(modifier = Modifier.height(4.dp)) // Added more spacing below button

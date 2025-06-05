@@ -51,7 +51,8 @@ class DiseaseClassifier(private val context: Context) {
                                 recommendations = listOf("Model not loaded. Please try again."),
                                 detectedConditions = emptyList(),
                                 amplitudeVariability = 0f,
-                                durationVariability = 0f
+                                durationVariability = 0f,
+                                averageHealthData = HealthData() // Empty health data for error case
                         )
                 }
 
@@ -162,7 +163,9 @@ class DiseaseClassifier(private val context: Context) {
                                         recommendations = recommendations,
                                         detectedConditions = detectedConditions,
                                         amplitudeVariability = amplitudeVariability,
-                                        durationVariability = durationVariability
+                                        durationVariability = durationVariability,
+                                        averageHealthData =
+                                                HealthData() // Empty health data for error case
                                 )
 
                         // Verify diagnosis result
@@ -182,7 +185,8 @@ class DiseaseClassifier(private val context: Context) {
                                 recommendations = listOf("Error during analysis: ${e.message}"),
                                 detectedConditions = emptyList(),
                                 amplitudeVariability = 0f,
-                                durationVariability = 0f
+                                durationVariability = 0f,
+                                averageHealthData = HealthData() // Empty health data for error case
                         )
                 }
         }
