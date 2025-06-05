@@ -233,7 +233,7 @@ fun InitialScreen(
                 }
         }
 
-
+        Box(modifier = Modifier.fillMaxSize()){
         // FIXED: Added scrollable column with proper spacing
         Column(
                 modifier =
@@ -266,22 +266,8 @@ fun InitialScreen(
                 )
 
 
-                                modifier =
-                                        Modifier.padding(
-                                                top = 18.dp,
 
-                                                )
-                        )
-                        Text(
-                                text = "(A Respiratory Health Monitoring App)",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Color(0xFF9C27B0),
-                                modifier =
-                                        Modifier.padding(
 
-                                                bottom = 4.dp
-                                        ) // REDUCED: Much smaller padding
-                        )
 
                         // FIXED: Patient info title with minimal spacing
                         Text(
