@@ -487,8 +487,10 @@ fun InitialScreen(
                                         checked = isHealthyChecked,
                                         onCheckedChange = { checked ->
                                                 isHealthyChecked = checked
-                                                if (checked) healthCondition = healthCondition.toMutableList().apply {
-                                                        add("Healthy")
+                                                if (checked) {
+                                                        healthCondition = mutableListOf("Healthy")
+                                                        isOtherChecked = false
+                                                        otherConditionText = ""
                                                 }else healthCondition = healthCondition.toMutableList().apply {
                                                         remove("Healthy")
                                                 }
