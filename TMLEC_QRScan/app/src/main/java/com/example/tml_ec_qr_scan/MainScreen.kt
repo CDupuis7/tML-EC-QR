@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -203,7 +204,13 @@ fun InitialScreen(
         var patientId by remember { mutableStateOf(patientMetadata?.id ?: "") }
         var age by remember { mutableStateOf(patientMetadata?.age?.toString() ?: "") }
         var gender by remember { mutableStateOf(patientMetadata?.gender ?: "") }
-        var healthCondition by remember { mutableStateOf(patientMetadata?.healthStatus ?: "") }
+        var healthCondition: MutableList<String> by remember { mutableStateOf(patientMetadata?.healthStatus
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.toMutableList()
+                ?: mutableListOf())
+        }
+        // var healthCondition by remember { mutableStateOf(patientMetadata?.healthStatus) }
 
         // Define dropdown options
         val genderOptions = listOf("Male", "Female", "Other")
@@ -229,7 +236,11 @@ fun InitialScreen(
                         patientId = metadata.id
                         age = if (metadata.age > 0) metadata.age.toString() else ""
                         gender = metadata.gender
-                        healthCondition = metadata.healthStatus
+                        // healthCondition = metadata.healthStatus
+                        healthCondition = healthCondition.toMutableList().apply {
+                                add(metadata.healthStatus)
+                        }
+
                 }
         }
 
@@ -400,42 +411,37 @@ fun InitialScreen(
                                                 }
                                 )
 
-                                DropdownMenu(
-                                        expanded = genderExpanded,
-                                        onDismissRequest = { genderExpanded = false },
-                                        modifier = Modifier.fillMaxWidth(0.9f)
-                                ) {
-                                        genderOptions.forEach { option ->
-                                                DropdownMenuItem(
-                                                        text = { Text(option) },
-                                                        onClick = {
-                                                                gender = option
-                                                                genderExpanded = false
-                                                        }
-                                                )
-                                        }
+                        DropdownMenu(
+                                expanded = genderExpanded,
+                                onDismissRequest = { genderExpanded = false },
+                                modifier = Modifier.fillMaxWidth(0.9f)
+                        ) {
+                                genderOptions.forEach { option ->
+                                        DropdownMenuItem(
+                                                text = { Text(option) },
+                                                onClick = {
+                                                        gender = option
+                                                        genderExpanded = false
+                                                }
+                                        )
                                 }
                         }
-
-                        // Health condition dropdown
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                        value = healthCondition,
-                                        onValueChange = { /* Disabled direct editing */ },
-                                        label = { Text("Health Condition") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        readOnly = true,
-                                        trailingIcon = {
-                                                IconButton(onClick = {
-                                                        healthConditionExpanded = true
-                                                }) {
-                                                        Icon(
-                                                                Icons.Default.ArrowDropDown,
-                                                                "Dropdown"
-                                                        )
-                                                }
+                }
+/*
+                // Health condition dropdown
+                Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                                value = healthCondition,
+                                onValueChange = { /* Disabled direct editing */},
+                                label = { Text("Health Condition") },
+                                modifier = Modifier.fillMaxWidth(),
+                                readOnly = true,
+                                trailingIcon = {
+                                        IconButton(onClick = { healthConditionExpanded = true }) {
+                                                Icon(Icons.Default.ArrowDropDown, "Dropdown")
                                         }
-                                )
+                                }
+                        )
 
                                 // Invisible clickable box that triggers the dropdown
                                 Box(
@@ -445,25 +451,127 @@ fun InitialScreen(
                                                 }
                                 )
 
-                                DropdownMenu(
-                                        expanded = healthConditionExpanded,
-                                        onDismissRequest = { healthConditionExpanded = false },
-                                        modifier = Modifier.fillMaxWidth(0.9f)
-                                ) {
-                                        healthConditionOptions.forEach { option ->
-                                                DropdownMenuItem(
-                                                        text = { Text(option) },
-                                                        onClick = {
-                                                                healthCondition = option
-                                                                healthConditionExpanded = false
-                                                        }
-                                                )
-                                        }
+                        DropdownMenu(
+                                expanded = healthConditionExpanded,
+                                onDismissRequest = { healthConditionExpanded = false },
+                                modifier = Modifier.fillMaxWidth(0.9f)
+                        ) {
+                                healthConditionOptions.forEach { option ->
+                                        DropdownMenuItem(
+                                                text = { Text(option) },
+                                                onClick = {
+                                                        healthCondition = option
+                                                        healthConditionExpanded = false
+                                                }
+                                        )
                                 }
                         }
+                }
+*/
+
+                // Health condition dropdown
+                Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalAlignment = Alignment.Start
+                ) {
+                        var selectedConditions by remember { mutableStateOf(mutableListOf<String>()) }
+                        val healthConditionOptions2 =
+                                listOf("Asthmatic", "COPD", "Respiratory Infection")
+                        var isHealthyChecked by remember { mutableStateOf(false) }
+                        var isOtherChecked by remember { mutableStateOf(false) }
+                        var otherConditionText by remember {mutableStateOf("")}
+
+                        Text("Please Select any Preexisting Conditions: ")
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()){
+                                Checkbox(
+                                        checked = isHealthyChecked,
+                                        onCheckedChange = { checked ->
+                                                isHealthyChecked = checked
+                                                if (checked) {
+                                                        healthCondition = mutableListOf("Healthy")
+                                                        isOtherChecked = false
+                                                        otherConditionText = ""
+                                                }else healthCondition = healthCondition.toMutableList().apply {
+                                                        remove("Healthy")
+                                                }
+                                        }
+                                )
+                                Text(text = "Healthy", modifier = Modifier.clickable{
+                                        isHealthyChecked = !isHealthyChecked
+
+                                }.padding(start = 8.dp))
+                        }
+                        val isEnabled = !isHealthyChecked
+                        healthConditionOptions2.forEach { option ->
+
+                                val isChecked = healthCondition.contains(option)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                                checked = isChecked,
+                                                onCheckedChange = { checked ->
+                                                        if (isEnabled) healthCondition = healthCondition.toMutableList().apply {
+                                                                if (checked) add(option) else remove(option)
+                                                        }
+                                                }, enabled = isEnabled
+                                        )
+                                        Text(
+                                                text = option,
+                                                modifier = Modifier.clickable(enabled = isEnabled) {
+                                                        healthCondition = healthCondition.toMutableList().apply{
+                                                                if (contains(option)) remove(option) else add (option)
+                                                        }
+                                                }
+                                                        .padding(start = 8.dp), color = if (isEnabled) Color.Unspecified else Color.Gray
+                                        )
+                                }
+
+                        }
+                        if (isHealthyChecked){
+                                isOtherChecked = false
+                                otherConditionText = ""
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()){
+
+                                Checkbox(
+                                        checked = isOtherChecked,
+                                        onCheckedChange = { checked ->
+                                                if (isEnabled) isOtherChecked = checked
+                                                if(!isOtherChecked){
+                                                        otherConditionText = ""
+                                                }
+                                        }, enabled = isEnabled
+
+                                )
+                                Text(text = "Other", modifier = Modifier.clickable (enabled = isEnabled){
+                                        isOtherChecked = !isOtherChecked
+                                        if (!isOtherChecked) {
+                                                otherConditionText = ""
+                                        }
 
                         // FIXED: Reduced spacing before buttons
-                        Spacer(modifier = Modifier.height(8.dp)) // REDUCED: Much smaller spacer
+                         // REDUCED: Much smaller spacer
+                                }.padding(start = 8.dp), color = if (isEnabled) Color.Unspecified else Color.Gray)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (isOtherChecked){
+                                OutlinedTextField(
+                                        value = otherConditionText,
+                                        onValueChange = { newText ->
+                                                otherConditionText = newText
+                                                healthCondition = healthCondition.toMutableList().apply{
+                                                        removeAll { it !in listOf("Asthmatic", "COPD", "Respiratory Infection", "Healthy") }
+                                                        if (newText.isNotBlank()){
+                                                                add(newText)
+                                                        }
+
+                                                }},
+                                        label = { Text("Please Specify")},
+                                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                )
+                        }
+                }
+                // FIXED: Reduced spacing before buttons
+                Spacer(modifier = Modifier.height(8.dp)) // REDUCED: Much smaller spacer
 
                         // Write to NFC button (if form is filled and NFC is available)
                         if (nfcManager.isNFCAvailable() &&
@@ -471,19 +579,19 @@ fun InitialScreen(
                                 patientId.isNotBlank() &&
                                 age.isNotBlank() &&
                                 gender.isNotBlank() &&
-                                healthCondition.isNotBlank()
-                        ) {
+                                healthCondition.isNotEmpty()
+                ) {
 
-                                Button(
-                                        onClick = {
-                                                val numAge = age.toIntOrNull() ?: 0
-                                                val metadata =
-                                                        PatientMetadata(
-                                                                id = patientId,
-                                                                age = numAge,
-                                                                gender = gender,
-                                                                healthStatus = healthCondition
-                                                        )
+                        Button(
+                                onClick = {
+                                        val numAge = age.toIntOrNull() ?: 0
+                                        val metadata =
+                                                PatientMetadata(
+                                                        id = patientId,
+                                                        age = numAge,
+                                                        gender = gender,
+                                                        healthStatus = healthCondition.joinToString(", ")
+                                                )
 
                                                 // Launch NFC write activity with current data
                                                 val intent =
@@ -508,36 +616,32 @@ fun InitialScreen(
                                 ) // REDUCED: Smaller spacer between buttons
                         }
 
-                        Button(
-                                onClick = {
-                                        // Save patient metadata before proceeding
-                                        val numAge = age.toIntOrNull() ?: 0
-                                        val metadata =
-                                                PatientMetadata(
-                                                        id = patientId,
-                                                        age = numAge,
-                                                        gender = gender,
-                                                        healthStatus = healthCondition
-                                                )
-                                        onUpdatePatientMetadata(metadata)
-                                        onProceedToCameraSetup()
-                                },
-                                enabled = patientId.isNotBlank() && age.isNotBlank() && gender.isNotBlank(),
-                                modifier =
-                                        Modifier.fillMaxWidth()
-                                                .height(48.dp), // REDUCED: Smaller button height
-                                colors =
-                                        ButtonDefaults.buttonColors(
-                                                containerColor = Color(0xFF2196F3),
-                                                disabledContainerColor = Color(0xFFBDBDBD)
+                Button(
+                        onClick = {
+                                // Save patient metadata before proceeding
+                                val numAge = age.toIntOrNull() ?: 0
+                                val metadata =
+                                        PatientMetadata(
+                                                id = patientId,
+                                                age = numAge,
+                                                gender = gender,
+                                                healthStatus = healthCondition.joinToString(", ")
                                         )
-                        ) {
-                                Text(
-                                        text = "Proceed to Camera Setup",
-                                        color = Color(0xFF000000)
+                                onUpdatePatientMetadata(metadata)
+                                onProceedToCameraSetup()
+                        },
+                        enabled = patientId.isNotBlank() && age.isNotBlank() && gender.isNotBlank(),
+                        modifier =
+                                Modifier.fillMaxWidth()
+                                        .height(48.dp), // REDUCED: Smaller button height
+                        colors =
+                                ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF2196F3),
+                                        disabledContainerColor = Color(0xFFBDBDBD)
                                 )
-                        }
-
+                ) { Text(text = "Proceed to Camera Setup",
+                    color = Color(0xFF000000))
+                }
 
                         // ADDED: Bottom padding to ensure content is not cut off
                         Spacer(modifier = Modifier.height(16.dp))
@@ -1094,6 +1198,15 @@ fun RecordingScreen(
         val breathingClassification = viewModel.breathingClassification.collectAsState().value
         val classificationConfidence = viewModel.classificationConfidence.collectAsState().value
 
+        // Keeps the screen active for 60 seconds during recording
+        val context = LocalContext.current
+        val activity = context as? MainActivity
+        LaunchedEffect(Unit) {
+                activity?.keepScreenOn {
+                        delay(60_000)
+                }
+        }
+
         // Used For Assistant card
         var showAssistant by remember { mutableStateOf(false) }
         val tips = listOf("You can tap an NFC tag to auto-fill the form with patient data.",
@@ -1104,6 +1217,7 @@ fun RecordingScreen(
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
         ) {
+                //Spacer(modifier = Modifier.height(160.dp))
                 // Back button at the top
                 Row(
                         modifier = Modifier.fillMaxWidth(),

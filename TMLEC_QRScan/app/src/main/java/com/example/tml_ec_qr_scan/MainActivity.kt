@@ -2,6 +2,7 @@ package com.example.tml_ec_qr_scan
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.ContentValues.TAG
 import android.content.Context
 import android.content.Intent
@@ -18,6 +19,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -2696,6 +2698,20 @@ class MainActivity : ComponentActivity() {
                 Toast.makeText(this, "⚠️ No patient data found in NFC tag", Toast.LENGTH_SHORT)
                         .show()
             }
+        }
+    }
+
+    suspend fun keepScreenOn(block: suspend () -> Unit) {
+        /*
+        * This function keeps the screen awake by setting the system flag to FLAG_KEEP_SCREEN_ON
+        * For use in camera recording functions where the screen has to stay on for longer than the
+        * default Android sleep time.
+         */
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        try {
+            block()
+        } finally {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
