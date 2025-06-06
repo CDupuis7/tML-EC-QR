@@ -3,6 +3,7 @@ package com.example.tml_ec_qr_scan
 // import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.magnifier
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -1124,7 +1126,16 @@ fun CalibratingScreen(
                                         ButtonDefaults.buttonColors(
                                                 containerColor = Color(0xFF607D8B)
                                         )
-                        ) { Text("📷   ${if (isFrontCamera) "Back" else "Front"} Camera") }
+                        ) {
+                                //Text("📷   ${if (isFrontCamera) "Back" else "Front"} Camera")
+                                Image(
+                                        painter = painterResource(id = R.drawable.camera),
+                                        modifier = Modifier.size(20.dp),
+                                        contentDescription = "Switch"
+
+                                )
+
+                        }
                 }
 
                 Spacer(modifier = Modifier.height(24.dp)) // Increased spacing for more camera room
@@ -1265,7 +1276,16 @@ fun RecordingScreen(
                                                         ButtonDefaults.buttonColors(
                                                                 containerColor = Color(0xFF607D8B)
                                                         )
-                                        ) { Text("📷 ${if (isFrontCamera) "Back" else "Front"} Camera") }
+                                        ) {
+                                                //Text("📷 ${if (isFrontCamera) "Back" else "Front"} Camera")
+                                                Image(
+                                                        painter = painterResource(id = R.drawable.camera),
+                                                        modifier = Modifier.size(20.dp),
+                                                        contentDescription = "Switch"
+
+                                                )
+
+                                        }
 
                                         Column(modifier = Modifier.padding(4.dp)) {
 
