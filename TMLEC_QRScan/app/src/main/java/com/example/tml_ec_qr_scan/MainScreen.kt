@@ -230,7 +230,7 @@ fun InitialScreen(
         var showAssistant by remember { mutableStateOf(false) }
         val chatResponse by viewModel.response.collectAsState()
         var userInput by remember { mutableStateOf("") }
-        val chatLog by viewModel.chatLog.collectAsState()
+        //val chatLog by viewModel.chatLog.collectAsState()
 
         // Update fields when patientMetadata changes (e.g., from NFC)
         LaunchedEffect(patientMetadata) {
@@ -726,40 +726,53 @@ fun InitialScreen(
 
                                                 Box(
                                                         modifier = Modifier
-                                                                .fillMaxHeight(.6f)
-                                                                .background(Color(0xFFF0F0F0))
                                                                 .fillMaxWidth()
-                                                                .verticalScroll(rememberScrollState())
+                                                                .background(Color(0xFFF0F0F0))
+                                                                .height(275.dp)
+                                                                //.verticalScroll(rememberScrollState())
                                                 ) {
                                                         val chatLog by viewModel.chatLog.collectAsState()
-
-                                                        LazyColumn(
-                                                                modifier = Modifier
-                                                                        .fillMaxWidth()
-                                                                        .background(Color(0xFFF0F0F0))
-                                                                        .padding(8.dp),
-                                                                reverseLayout = true
-                                                        ) {
-                                                                items(items = chatLog.reversed()) { msg ->
-                                                                        val isUser = msg.sender == "user"
-                                                                        Row(
-                                                                                modifier = Modifier.fillMaxWidth(),
-                                                                                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-                                                                        ) {
-                                                                                Text(
-                                                                                        text = msg.content,
-                                                                                        color = Color.Black,
-                                                                                        modifier = Modifier
-                                                                                                .padding(6.dp)
-                                                                                                .background(if (isUser) Color(0xFFD1E7DD) else Color(0xFFE7D1DD))
-                                                                                                .padding(10.dp),
-                                                                                        style = MaterialTheme.typography.bodyMedium
+                                                        if(chatLog.isNotEmpty()) {
+                                                                LazyColumn(
+                                                                        modifier = Modifier
+                                                                                .fillMaxWidth()
+                                                                                .background(
+                                                                                        Color(0xFFF0F0F0)
                                                                                 )
+                                                                                .padding(8.dp),
+                                                                        reverseLayout = true
+                                                                ) {
+                                                                        items(items = chatLog.reversed()) { msg ->
+                                                                                val isUser =
+                                                                                        msg.sender == "user"
+                                                                                Row(
+                                                                                        modifier = Modifier.fillMaxWidth(),
+                                                                                        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                                                                                ) {
+                                                                                        Text(
+                                                                                                text = msg.content,
+                                                                                                color = Color.Black,
+                                                                                                modifier = Modifier
+                                                                                                        .padding(
+                                                                                                                6.dp
+                                                                                                        )
+                                                                                                        .background(
+                                                                                                                if (isUser) Color(
+                                                                                                                        0xFFD1E7DD
+                                                                                                                ) else Color(
+                                                                                                                        0xFFE7D1DD
+                                                                                                                )
+                                                                                                        )
+                                                                                                        .padding(
+                                                                                                                10.dp
+                                                                                                        ),
+                                                                                                style = MaterialTheme.typography.bodyMedium
+                                                                                        )
+                                                                                }
                                                                         }
                                                                 }
+
                                                         }
-
-
                                                 }
 
                                                 Spacer(modifier = Modifier.height(8.dp))
