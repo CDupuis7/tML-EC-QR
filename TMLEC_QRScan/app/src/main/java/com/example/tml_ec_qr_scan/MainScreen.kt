@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.magnifier
+import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -229,6 +230,7 @@ fun InitialScreen(
         var showAssistant by remember { mutableStateOf(false) }
         val chatResponse by viewModel.response.collectAsState()
         var userInput by remember { mutableStateOf("") }
+        val chatLog by viewModel.chatLog.collectAsState()
 
         // Update fields when patientMetadata changes (e.g., from NFC)
         LaunchedEffect(patientMetadata) {
@@ -614,34 +616,36 @@ fun InitialScreen(
                                 Spacer(
                                         modifier = Modifier.height(6.dp)
                                 ) // REDUCED: Smaller spacer between buttons
+
+                                Button(
+                                        onClick = {
+                                                // Save patient metadata before proceeding
+                                                val numAge = age.toIntOrNull() ?: 0
+                                                val metadata =
+                                                        PatientMetadata(
+                                                                id = patientId,
+                                                                age = numAge,
+                                                                gender = gender,
+                                                                healthStatus = healthCondition.joinToString(", ")
+                                                        )
+                                                onUpdatePatientMetadata(metadata)
+                                                onProceedToCameraSetup()
+                                        },
+                                        enabled = patientId.isNotBlank() && age.isNotBlank() && gender.isNotBlank(),
+                                        modifier =
+                                                Modifier.fillMaxWidth()
+                                                        .height(48.dp), // REDUCED: Smaller button height
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor = Color(0xFF2196F3),
+                                                        disabledContainerColor = Color(0xFFBDBDBD)
+                                                )
+                                ) { Text(text = "Proceed to Camera Setup",
+                                        color = Color(0xFF000000))
+                                }
                         }
 
-                Button(
-                        onClick = {
-                                // Save patient metadata before proceeding
-                                val numAge = age.toIntOrNull() ?: 0
-                                val metadata =
-                                        PatientMetadata(
-                                                id = patientId,
-                                                age = numAge,
-                                                gender = gender,
-                                                healthStatus = healthCondition.joinToString(", ")
-                                        )
-                                onUpdatePatientMetadata(metadata)
-                                onProceedToCameraSetup()
-                        },
-                        enabled = patientId.isNotBlank() && age.isNotBlank() && gender.isNotBlank(),
-                        modifier =
-                                Modifier.fillMaxWidth()
-                                        .height(48.dp), // REDUCED: Smaller button height
-                        colors =
-                                ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF2196F3),
-                                        disabledContainerColor = Color(0xFFBDBDBD)
-                                )
-                ) { Text(text = "Proceed to Camera Setup",
-                    color = Color(0xFF000000))
-                }
+
 
                         // ADDED: Bottom padding to ensure content is not cut off
                         Spacer(modifier = Modifier.height(16.dp))
@@ -672,6 +676,7 @@ fun InitialScreen(
 
 
         }
+
         if (showAssistant) {
                 androidx.compose.ui.window.Dialog(onDismissRequest = { showAssistant = false }) {
 
@@ -723,9 +728,38 @@ fun InitialScreen(
                                                         modifier = Modifier
                                                                 .fillMaxHeight(.6f)
                                                                 .background(Color(0xFFF0F0F0))
-                                                                .fillMaxWidth(),
+                                                                .fillMaxWidth()
+                                                                .verticalScroll(rememberScrollState())
                                                 ) {
-                                                        Text(text = chatResponse, color = Color(0xFF000000))
+                                                        val chatLog by viewModel.chatLog.collectAsState()
+
+                                                        LazyColumn(
+                                                                modifier = Modifier
+                                                                        .fillMaxWidth()
+                                                                        .background(Color(0xFFF0F0F0))
+                                                                        .padding(8.dp),
+                                                                reverseLayout = true
+                                                        ) {
+                                                                items(items = chatLog.reversed()) { msg ->
+                                                                        val isUser = msg.sender == "user"
+                                                                        Row(
+                                                                                modifier = Modifier.fillMaxWidth(),
+                                                                                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+                                                                        ) {
+                                                                                Text(
+                                                                                        text = msg.content,
+                                                                                        color = Color.Black,
+                                                                                        modifier = Modifier
+                                                                                                .padding(6.dp)
+                                                                                                .background(if (isUser) Color(0xFFD1E7DD) else Color(0xFFE7D1DD))
+                                                                                                .padding(10.dp),
+                                                                                        style = MaterialTheme.typography.bodyMedium
+                                                                                )
+                                                                        }
+                                                                }
+                                                        }
+
+
                                                 }
 
                                                 Spacer(modifier = Modifier.height(8.dp))
