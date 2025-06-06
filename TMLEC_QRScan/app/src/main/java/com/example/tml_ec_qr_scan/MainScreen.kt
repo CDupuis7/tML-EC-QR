@@ -1265,19 +1265,7 @@ fun RecordingScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Display patient info
-                patientMetadata?.let {
-                        Text(
-                                text = "Patient: ${it.id}",
-                                style = MaterialTheme.typography.titleMedium
 
-
-                        )
-                        Text(
-                                text = "Age: ${it.age}, Gender: ${it.gender}",
-                                style = MaterialTheme.typography.bodyMedium
-                        )
-                }
 
                 //Spacer(modifier = Modifier.height(4.dp))
 
@@ -1295,12 +1283,31 @@ fun RecordingScreen(
                                 // Camera toggle button
                                 Button(
                                         onClick = { viewModel.toggleCamera() },
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier.weight(1f)
+                                                .padding(8.dp),
                                         colors =
                                                 ButtonDefaults.buttonColors(
                                                         containerColor = Color(0xFF607D8B)
                                                 )
                                 ) { Text("📷 ${if (isFrontCamera) "Back" else "Front"} Camera") }
+
+                                Column(modifier = Modifier.padding(4.dp)){
+
+                                        // Display patient info
+                                        patientMetadata?.let {
+                                                Text(
+                                                        text = "Patient: ${it.id}",
+                                                        style = MaterialTheme.typography.titleMedium
+
+
+                                                )
+                                                Text(
+                                                        text = "Age: ${it.age}, Gender: ${it.gender}",
+                                                        style = MaterialTheme.typography.bodyMedium
+                                                )
+                                        }
+
+                                }
 
                                 // Health data display in the same row
                                 Box(modifier = Modifier.weight(1f)) {

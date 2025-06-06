@@ -55,11 +55,11 @@ class QROverlay(context: Context) : View(context) {
                 if (detection.corners.isNotEmpty()) {
                     val path = Path()
                     val firstCorner = detection.corners[0]
-                    path.moveTo(firstCorner.x, firstCorner.y)
+                    path.moveTo(-firstCorner.x, -firstCorner.y)
 
                     for (i in 1 until detection.corners.size) {
                         val corner = detection.corners[i]
-                        path.lineTo(corner.x, corner.y)
+                        path.lineTo(-corner.x, -corner.y)
                     }
 
                     // Close the path back to the first point
