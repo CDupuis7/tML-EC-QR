@@ -233,9 +233,7 @@ fun InitialScreen(
 
         // Used For Assistant card
         var showAssistant by remember { mutableStateOf(false) }
-        val chatResponse by viewModel.response.collectAsState()
         var userInput by remember { mutableStateOf("") }
-        //val chatLog by viewModel.chatLog.collectAsState()
 
         // Update fields when patientMetadata changes (e.g., from NFC)
         LaunchedEffect(patientMetadata) {
@@ -682,27 +680,45 @@ fun InitialScreen(
 
         }
 
+        val chatLog by viewModel.chatLog.collectAsState()
+
         if (showAssistant) {
-                androidx.compose.ui.window.Dialog(onDismissRequest = { showAssistant = false }) {
+                AssistantDialog(
+                        show = true,
+                        onDismiss = { showAssistant = false },
+                        userInput = userInput,
+                        onUserInputChange = { userInput = it },
+                        onSendMessage = {
+                                if (userInput.isNotBlank()) {
+                                        viewModel.sendMessage(userInput)
+                                        userInput = ""
+                                }
+                        },
+                        chatLog = chatLog
+                )
+        }
+}
 
-                        Box(
-                                modifier = Modifier
-                                        .fillMaxSize()
-                        ) {
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AssistantDialog(
+        show: Boolean,
+        onDismiss: () -> Unit,
+        userInput: String,
+        onUserInputChange: (String) -> Unit,
+        onSendMessage: () -> Unit,
+        chatLog: List<ChatViewModel.DisplayMessage>
+) {
+        if (show) {
+                androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+                        Box(modifier = Modifier.fillMaxSize()) {
                                 Card(
-                                        modifier =
-                                                Modifier.fillMaxWidth()
-                                                        .fillMaxHeight(0.5f) // Use 80% of screen height
-                                                        .align(Alignment.BottomCenter),
+                                        modifier = Modifier
+                                                .fillMaxWidth()
+                                                .fillMaxHeight(0.5f)
+                                                .align(Alignment.BottomCenter),
                                         shape = RoundedCornerShape(16.dp),
-                                        colors =
-                                                CardDefaults.cardColors(
-
-                                                        containerColor =
-                                                                Color(
-                                                                        0xFFFFFFFF
-                                                                )
-                                                )
+                                        colors = CardDefaults.cardColors(containerColor = Color.White)
                                 ) {
                                         Column(modifier = Modifier.padding(8.dp)) {
                                                 Row(
@@ -716,16 +732,8 @@ fun InitialScreen(
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = Color.Red
                                                         )
-
-                                                        // Close button
-                                                        IconButton(onClick = {
-                                                                showAssistant = false
-                                                        }) {
-                                                                Text(
-                                                                        "✕",
-                                                                        fontSize = 24.sp,
-                                                                        color = Color.Red
-                                                                )
+                                                        IconButton(onClick = onDismiss) {
+                                                                Text("✕", fontSize = 24.sp, color = Color.Red)
                                                         }
                                                 }
 
@@ -734,22 +742,16 @@ fun InitialScreen(
                                                                 .fillMaxWidth()
                                                                 .background(Color(0xFFF0F0F0))
                                                                 .height(275.dp)
-                                                                //.verticalScroll(rememberScrollState())
                                                 ) {
-                                                        val chatLog by viewModel.chatLog.collectAsState()
-                                                        if(chatLog.isNotEmpty()) {
+                                                        if (chatLog.isNotEmpty()) {
                                                                 LazyColumn(
                                                                         modifier = Modifier
                                                                                 .fillMaxWidth()
-                                                                                .background(
-                                                                                        Color(0xFFF0F0F0)
-                                                                                )
                                                                                 .padding(8.dp),
                                                                         reverseLayout = true
                                                                 ) {
-                                                                        items(items = chatLog.reversed()) { msg ->
-                                                                                val isUser =
-                                                                                        msg.sender == "user"
+                                                                        items(chatLog.reversed()) { msg ->
+                                                                                val isUser = msg.sender == "user"
                                                                                 Row(
                                                                                         modifier = Modifier.fillMaxWidth(),
                                                                                         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
@@ -758,25 +760,17 @@ fun InitialScreen(
                                                                                                 text = msg.content,
                                                                                                 color = Color.Black,
                                                                                                 modifier = Modifier
-                                                                                                        .padding(
-                                                                                                                6.dp
-                                                                                                        )
+                                                                                                        .padding(6.dp)
                                                                                                         .background(
-                                                                                                                if (isUser) Color(
-                                                                                                                        0xFFD1E7DD
-                                                                                                                ) else Color(
-                                                                                                                        0xFFE7D1DD
-                                                                                                                )
+                                                                                                                if (isUser) Color(0xFFD1E7DD)
+                                                                                                                else Color(0xFFE7D1DD)
                                                                                                         )
-                                                                                                        .padding(
-                                                                                                                10.dp
-                                                                                                        ),
+                                                                                                        .padding(10.dp),
                                                                                                 style = MaterialTheme.typography.bodyMedium
                                                                                         )
                                                                                 }
                                                                         }
                                                                 }
-
                                                         }
                                                 }
 
@@ -784,45 +778,34 @@ fun InitialScreen(
 
                                                 OutlinedTextField(
                                                         value = userInput,
-                                                        onValueChange = { userInput = it },
-                                                        label = { Text("Your Question")},
+                                                        onValueChange = onUserInputChange,
+                                                        label = { Text("Your Question") },
                                                         modifier = Modifier.fillMaxWidth(),
                                                         keyboardOptions = KeyboardOptions.Default.copy(
                                                                 imeAction = ImeAction.Send
                                                         ),
-                                                        keyboardActions = KeyboardActions(onSend = {
-                                                                if(userInput.isNotBlank()){
-                                                                        viewModel.sendMessage(userInput)
-                                                                        userInput = ""
+                                                        keyboardActions = KeyboardActions(
+                                                                onSend = {
+                                                                        if (userInput.isNotBlank()) onSendMessage()
                                                                 }
-                                                        }),
+                                                        ),
                                                         singleLine = true
-
-
                                                 )
 
                                                 Button(
-                                                        onClick = {
-                                                                viewModel.sendMessage(userInput)
-                                                                userInput = ""
-                                                        },
+                                                        onClick = onSendMessage,
                                                         modifier = Modifier.align(Alignment.End),
-                                                        colors =
-                                                                ButtonDefaults.buttonColors(
-                                                                        containerColor =
-                                                                                Color(0xFFFF0000) // Bright red
-                                                                ),
+                                                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
                                                 ) {
-                                                        Text("Ask", color = Color(0xFFFFFFFF))
+                                                        Text("Ask", color = Color.White)
                                                 }
-
                                         }
                                 }
-
                         }
                 }
         }
 }
+
 
 @Composable
 fun CameraSetupScreen(
@@ -834,7 +817,8 @@ fun CameraSetupScreen(
         onToggleTrainingMode: () -> Unit,
         onStartDiseaseDetection: () -> Unit = {},
         onStartYoloTracking: () -> Unit = {},
-        onBackClick: () -> Unit
+        onBackClick: () -> Unit,
+        viewGPTModel: ChatViewModel = viewModel()
 ) {
         // Get camera started state from ViewModel
         val isCameraStarted by viewModel.isCameraStarted.collectAsState()
@@ -1034,92 +1018,22 @@ fun CameraSetupScreen(
                 }
 
         }
+        val chatLog by viewGPTModel.chatLog.collectAsState()
+        var userInput by remember { mutableStateOf("") }
         if (showAssistant) {
-                androidx.compose.ui.window.Dialog(onDismissRequest = { showAssistant = false }) {
-
-                        Box(
-                                modifier = Modifier
-                                        .fillMaxSize()
-                        ) {
-                                Card(
-                                        modifier =
-                                                Modifier.fillMaxWidth()
-                                                        .fillMaxHeight(0.5f) // Use 80% of screen height
-                                                        .align(Alignment.BottomCenter),
-                                        shape = RoundedCornerShape(16.dp),
-                                        colors =
-                                                CardDefaults.cardColors(
-
-                                                        containerColor =
-                                                                Color(
-                                                                        0xFFFFFFFF
-                                                                )
-                                                )
-                                ) {
-                                        Column(modifier = Modifier.padding(8.dp)) {
-                                                Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                        Text(
-                                                                text = "Assistant",
-                                                                style = MaterialTheme.typography.titleLarge,
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = Color.Red
-                                                        )
-
-                                                        // Close button
-                                                        IconButton(onClick = {
-                                                                showAssistant = false
-                                                        }) {
-                                                                Text(
-                                                                        "✕",
-                                                                        fontSize = 24.sp,
-                                                                        color = Color.Red
-                                                                )
-                                                        }
-                                                }
-
-                                                Box(
-                                                        modifier = Modifier
-                                                                .fillMaxHeight(1f)
-                                                                .fillMaxWidth(),
-
-
-                                                        ) {
-
-                                                        Column(modifier = Modifier.padding(16.dp)){
-                                                                tips.forEach { item ->
-
-                                                                        Row(
-                                                                                verticalAlignment = Alignment.Top,
-                                                                                modifier = Modifier.padding(bottom = 8.dp)
-                                                                        ){
-                                                                                Text(
-                                                                                        text = "•",
-                                                                                        modifier = Modifier.padding(8.dp),
-                                                                                        color = Color(0xFF000000)
-                                                                                )
-                                                                                Text(text = item, color = Color(0xFF000000))
-
-
-                                                                        }
-
-                                                                }
-
-                                                        }
-
-                                                }
-
-                                                Spacer(modifier = Modifier.height(8.dp))
-
-
-                                        }
+                AssistantDialog(
+                        show = true,
+                        onDismiss = { showAssistant = false },
+                        userInput = userInput,
+                        onUserInputChange = { userInput = it },
+                        onSendMessage = {
+                                if (userInput.isNotBlank()) {
+                                        viewGPTModel.sendMessage(userInput)
+                                        userInput = ""
                                 }
-
-                        }
-                }
+                        },
+                        chatLog = chatLog
+                )
         }
 }
 
@@ -1127,7 +1041,8 @@ fun CameraSetupScreen(
 fun CalibratingScreen(
         patientMetadata: PatientMetadata?,
         onForceComplete: () -> Unit,
-        onBackClick: () -> Unit
+        onBackClick: () -> Unit,
+        viewGPTModel: ChatViewModel = viewModel()
 ) {
         var elapsedTime by remember { mutableStateOf(0L) }
         var showCompleteButton by remember { mutableStateOf(false) }
@@ -1235,6 +1150,24 @@ fun CalibratingScreen(
                         ) { Text("Complete Calibration Now") }
                 }
         }
+
+//        val chatLog by viewGPTModel.chatLog.collectAsState()
+//        var userInput by remember { mutableStateOf("") }
+//        if (showAssistant) {
+//                AssistantDialog(
+//                        show = true,
+//                        onDismiss = { showAssistant = false },
+//                        userInput = userInput,
+//                        onUserInputChange = { userInput = it },
+//                        onSendMessage = {
+//                                if (userInput.isNotBlank()) {
+//                                        viewGPTModel.sendMessage(userInput)
+//                                        userInput = ""
+//                                }
+//                        },
+//                        chatLog = chatLog
+//                )
+//        }
 }
 
 @Composable
@@ -1251,7 +1184,8 @@ fun RecordingScreen(
         onStopRecording: () -> Unit,
         onForceBreathingUpdate: () -> Unit,
         onNewPatient: () -> Unit,
-        onBackClick: () -> Unit
+        onBackClick: () -> Unit,
+        viewGPTModel: ChatViewModel = viewModel()
 ) {
         // Access the ViewModel from the CompositionLocal
         val viewModel = LocalViewModel.current
@@ -1553,6 +1487,23 @@ fun RecordingScreen(
                 // FIXED: Added bottom spacer to ensure button is fully visible
                 Spacer(modifier = Modifier.height(32.dp))
         }
+        val chatLog by viewGPTModel.chatLog.collectAsState()
+        var userInput by remember { mutableStateOf("") }
+        if (showAssistant) {
+                AssistantDialog(
+                        show = true,
+                        onDismiss = { showAssistant = false },
+                        userInput = userInput,
+                        onUserInputChange = { userInput = it },
+                        onSendMessage = {
+                                if (userInput.isNotBlank()) {
+                                        viewGPTModel.sendMessage(userInput)
+                                        userInput = ""
+                                }
+                        },
+                        chatLog = chatLog
+                )
+        }
 
 
 
@@ -1567,7 +1518,9 @@ fun ResultsScreen(
         onNewPatient: () -> Unit,
         onSaveGraph: () -> Unit,
         onReturnToCameraSetup: () -> Unit,
-        onBackClick: () -> Unit
+        onBackClick: () -> Unit,
+        viewGPTModel: ChatViewModel = viewModel()
+
 ) {
         val viewModel = LocalViewModel.current
         val breathingRate by viewModel.breathingRate.collectAsState()
@@ -1957,6 +1910,7 @@ fun ResultsScreen(
 
                 // FIXED: Added bottom spacer to ensure button is fully visible
                 Spacer(modifier = Modifier.height(32.dp))
+                
         }
 
         // Recommendations Dialog
@@ -2041,6 +1995,7 @@ fun ResultsScreen(
                         }
                 }
         }
+        var showAssistant by remember { mutableStateOf(false) }
 
         // Graph Dialog - using the original RespirationChart component
         if (showGraphDialog) {
@@ -2106,9 +2061,29 @@ fun ResultsScreen(
                                                         )
                                                 }
                                         }
+
                                 }
+
                         }
+
                 }
+        }
+        val chatLog by viewGPTModel.chatLog.collectAsState()
+        var userInput by remember { mutableStateOf("") }
+        if (showAssistant) {
+                AssistantDialog(
+                        show = true,
+                        onDismiss = { showAssistant = false },
+                        userInput = userInput,
+                        onUserInputChange = { userInput = it },
+                        onSendMessage = {
+                                if (userInput.isNotBlank()) {
+                                        viewGPTModel.sendMessage(userInput)
+                                        userInput = ""
+                                }
+                        },
+                        chatLog = chatLog
+                )
         }
 }
 
@@ -2161,7 +2136,8 @@ private fun List<RespiratoryDataPoint>.calculateAmplitudeVariation(): Float {
 }
 
 @Composable
-fun RespiratoryGraph(respiratoryData: List<RespiratoryDataPoint>, modifier: Modifier = Modifier) {
+fun RespiratoryGraph(respiratoryData: List<RespiratoryDataPoint>, modifier: Modifier = Modifier, viewGPTModel: ChatViewModel = viewModel()
+) {
         if (respiratoryData.isEmpty()) return
 
         // Draw respiratory graph using Canvas
