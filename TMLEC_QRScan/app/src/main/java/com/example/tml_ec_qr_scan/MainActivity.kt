@@ -396,30 +396,32 @@ class MainActivity : ComponentActivity() {
         Box(modifier = Modifier.fillMaxSize()) {
             // Camera preview - ensure PreviewView is properly displayed
             AndroidView(
-                    factory = { context ->
+                factory = { context ->
+                    Log.d(
+                        "MainActivity",
+                        "🎥 AndroidView factory called - creating/returning PreviewView"
+                    )
+                    previewView.apply {
+                        // Ensure proper scaling and implementation mode
+                        implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
                         Log.d(
-                                "MainActivity",
-                                "🎥 AndroidView factory called - creating/returning PreviewView"
+                            "MainActivity",
+                            "🎥 PreviewView configured in AndroidView factory"
                         )
-                        previewView.apply {
-                            // Ensure proper scaling and implementation mode
-                            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
-                            scaleType = PreviewView.ScaleType.FILL_CENTER
-                            Log.d(
-                                    "MainActivity",
-                                    "🎥 PreviewView configured in AndroidView factory"
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                    update = { view ->
-                        Log.d("MainActivity", "🎥 AndroidView update called")
-                        // Ensure the surface provider is set
-                        if (preview != null) {
-                            preview?.setSurfaceProvider(view.surfaceProvider)
-                            Log.d("MainActivity", "🎥 Surface provider set in AndroidView update")
-                        }
                     }
+                },
+                modifier = Modifier
+                            .height(400.dp)
+                            .fillMaxWidth(),
+                update = { view ->
+                    Log.d("MainActivity", "🎥 AndroidView update called")
+                    // Ensure the surface provider is set
+                    if (preview != null) {
+                        preview?.setSurfaceProvider(view.surfaceProvider)
+                        Log.d("MainActivity", "🎥 Surface provider set in AndroidView update")
+                    }
+                }
             )
 
             // QR/YOLO overlays based on tracking mode
@@ -428,11 +430,11 @@ class MainActivity : ComponentActivity() {
                 TrackingMode.QR_TRACKING -> {
                     if (qrDetections.isNotEmpty()) {
                         BoofCVQRCodeOverlay(
-                                qrDetections = qrDetections,
-                                imageWidth = imageWidth,
-                                imageHeight = imageHeight,
-                                rotationDegrees = rotationDegrees,
-                                modifier = Modifier.fillMaxSize()
+                            qrDetections = qrDetections,
+                            imageWidth = imageWidth,
+                            imageHeight = imageHeight,
+                            rotationDegrees = rotationDegrees,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
 
@@ -441,26 +443,27 @@ class MainActivity : ComponentActivity() {
                         QRAlignmentGuide(modifier = Modifier.fillMaxSize())
                     }
                 }
+
                 TrackingMode.YOLO_TRACKING -> {
                     // FIXED: During calibration, show QR overlay even in YOLO mode
                     if (isCalibrating && qrDetections.isNotEmpty()) {
                         BoofCVQRCodeOverlay(
-                                qrDetections = qrDetections,
-                                imageWidth = imageWidth,
-                                imageHeight = imageHeight,
-                                rotationDegrees = rotationDegrees,
-                                modifier = Modifier.fillMaxSize()
+                            qrDetections = qrDetections,
+                            imageWidth = imageWidth,
+                            imageHeight = imageHeight,
+                            rotationDegrees = rotationDegrees,
+                            modifier = Modifier.fillMaxSize()
                         )
                     } else if (!isCalibrating) {
                         // Normal YOLO mode when not calibrating
                         val chestDetection by viewModel.chestDetection.collectAsState()
                         chestDetection?.let { detection ->
                             ChestOverlay(
-                                    chestDetection = detection,
-                                    imageWidth = imageWidth,
-                                    imageHeight = imageHeight,
-                                    rotationDegrees = rotationDegrees,
-                                    modifier = Modifier.fillMaxSize()
+                                chestDetection = detection,
+                                imageWidth = imageWidth,
+                                imageHeight = imageHeight,
+                                rotationDegrees = rotationDegrees,
+                                modifier = Modifier.fillMaxSize()
                             )
                         }
                     }
@@ -478,66 +481,66 @@ class MainActivity : ComponentActivity() {
 
 
                 Box(
-                        modifier =
-                                Modifier.align(Alignment.TopCenter)
-                                        .padding(top = 50.dp, start = 16.dp, end = 16.dp)
-                                        .background(
-                                                Color.Black.copy(alpha = 0.7f),
-                                                shape = MaterialTheme.shapes.small
-                                        )
-                                        .padding(12.dp)
+                    modifier =
+                        Modifier.align(Alignment.TopCenter)
+                            .padding(top = 50.dp, start = 16.dp, end = 16.dp)
+                            .background(
+                                Color.Black.copy(alpha = 0.7f),
+                                shape = MaterialTheme.shapes.small
+                            )
+                            .padding(12.dp)
                 ) {
                     Text(
-                            text = "🎯 Center your QR code on the red dot for optimal tracking",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        text = "🎯 Center your QR code on the red dot for optimal tracking",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }
 
             if (breathingPhase != "Unknown") {
                 Box(
-                        modifier =
-                                Modifier.align(Alignment.TopEnd)
-                                        .padding(
-                                                top = 80.dp,
-                                                end = 16.dp,
-                                                start = 16.dp
-                                        ) // Increased from 32dp to 80dp
-                                        .background(
-                                                Color.Black.copy(alpha = 0.7f),
-                                                shape = MaterialTheme.shapes.small
-                                        )
-                                        .padding(8.dp)
+                    modifier =
+                        Modifier.align(Alignment.TopEnd)
+                            .padding(
+                                top = 80.dp,
+                                end = 16.dp,
+                                start = 16.dp
+                            ) // Increased from 32dp to 80dp
+                            .background(
+                                Color.Black.copy(alpha = 0.7f),
+                                shape = MaterialTheme.shapes.small
+                            )
+                            .padding(8.dp)
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                                text =
-                                        when (breathingPhase.lowercase()) {
-                                            "exhaling" -> " Exhaling"
-                                            "inhaling" -> "Inhaling"
-                                            "pause" -> "Pause"
-                                            else -> "🔄 Detecting movement..."
-                                        },
-                                color =
-                                        when (breathingPhase.lowercase()) {
-                                            "exhaling" -> Color(0xFF2196F3) // Blue for exhaling
-                                            "inhaling" -> Color(0xFF4CAF50) // Green for inhaling
-                                            "pause" -> Color(0xFFFFC107) // Yellow for pause
-                                            else -> Color(0xFFFFFFFF) // White for unknown
-                                        },
-                                style =
-                                        MaterialTheme.typography
-                                                .bodyLarge, // Changed from titleLarge
-                                fontWeight = FontWeight.Medium // Changed from Bold
+                            text =
+                                when (breathingPhase.lowercase()) {
+                                    "exhaling" -> " Exhaling"
+                                    "inhaling" -> "Inhaling"
+                                    "pause" -> "Pause"
+                                    else -> "🔄 Detecting movement..."
+                                },
+                            color =
+                                when (breathingPhase.lowercase()) {
+                                    "exhaling" -> Color(0xFF2196F3) // Blue for exhaling
+                                    "inhaling" -> Color(0xFF4CAF50) // Green for inhaling
+                                    "pause" -> Color(0xFFFFC107) // Yellow for pause
+                                    else -> Color(0xFFFFFFFF) // White for unknown
+                                },
+                            style =
+                                MaterialTheme.typography
+                                    .bodyLarge, // Changed from titleLarge
+                            fontWeight = FontWeight.Medium // Changed from Bold
                         )
 
                         // Show velocity for debugging if needed
                         Text(
-                                text = "Movement: ${String.format("%.1f", currentVelocity)} px/s",
-                                color = Color.White.copy(alpha = 0.8f),
-                                style = MaterialTheme.typography.bodySmall
+                            text = "Movement: ${String.format("%.1f", currentVelocity)} px/s",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.bodySmall
                         )
 
                         // Recording status
@@ -555,47 +558,48 @@ class MainActivity : ComponentActivity() {
             }
 
             // Add coordinate system debug info
-            Box(
+            if (trackingMode == TrackingMode.QR_TRACKING || isCalibrating) {
+                Box(
                     modifier =
-                            Modifier.align(Alignment.BottomStart)
-                                    .padding(top = 32.dp, start = 16.dp)
-                                    .background(
-                                            Color.Black.copy(alpha = 0.7f),
-                                            shape = MaterialTheme.shapes.small
-                                    )
-                                    .padding(8.dp)
-            ) {
-                Column {
-                    //                    Text(
-                    //                            text = "Coordinate Debug",
-                    //                            color = Color.White,
-                    //                            style = MaterialTheme.typography.bodySmall,
-                    //                            fontWeight = FontWeight.Bold
-                    //                    )
-                    //                    Text(
-                    //                            text = "Rotation: ${rotationDegrees}°",
-                    //                            color = Color.White,
-                    //                            style = MaterialTheme.typography.bodySmall
-                    //                    )
-                    //                    if (trackingMode == TrackingMode.QR_TRACKING ||
-                    // isCalibrating) {
-                    //                        Text(
-                    //                            text = "Image:
-                    // ${imageWidth.toInt()}x${imageHeight.toInt()}",
-                    //                            color = Color.White,
-                    //                            style = MaterialTheme.typography.bodySmall
-                    //                        )
-                    //                    }
-                    // Only show QR Count for QR tracking mode or during calibration
-                    if (trackingMode == TrackingMode.QR_TRACKING || isCalibrating) {
-                        Text(
-                                text = "QR Detected: ${qrDetections.size}",
-                                color =
-                                        if (qrDetections.isNotEmpty()) Color(0xFF4CAF50)
-                                        else Color(0xFFFF5252),
-                                style = MaterialTheme.typography.bodySmall
-                        )
-                    }
+                        Modifier.align(Alignment.BottomStart)
+                            .padding(top = 32.dp, start = 16.dp)
+                            .background(
+                                Color.Black.copy(alpha = 0.7f),
+                                shape = MaterialTheme.shapes.small
+                            )
+                            .padding(8.dp)
+                ) {
+                    Column {
+                        //                    Text(
+                        //                            text = "Coordinate Debug",
+                        //                            color = Color.White,
+                        //                            style = MaterialTheme.typography.bodySmall,
+                        //                            fontWeight = FontWeight.Bold
+                        //                    )
+                        //                    Text(
+                        //                            text = "Rotation: ${rotationDegrees}°",
+                        //                            color = Color.White,
+                        //                            style = MaterialTheme.typography.bodySmall
+                        //                    )
+                        //                    if (trackingMode == TrackingMode.QR_TRACKING ||
+                        // isCalibrating) {
+                        //                        Text(
+                        //                            text = "Image:
+                        // ${imageWidth.toInt()}x${imageHeight.toInt()}",
+                        //                            color = Color.White,
+                        //                            style = MaterialTheme.typography.bodySmall
+                        //                        )
+                        //                    }
+                        // Only show QR Count for QR tracking mode or during calibration
+
+                    Text(
+                        text = "QR Detected: ${qrDetections.size}",
+                        color =
+                            if (qrDetections.isNotEmpty()) Color(0xFF4CAF50)
+                            else Color(0xFFFF5252),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+
                     //                    Text(
                     //                            text = "Mode: ${trackingMode.name}",
                     //                            color = Color.White,
@@ -603,6 +607,7 @@ class MainActivity : ComponentActivity() {
                     //                    )
                 }
             }
+        }
 
             // Recording timer
             if (isRecording) {
