@@ -14,6 +14,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.*
+
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.TextFieldValue
+
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -781,7 +786,17 @@ fun InitialScreen(
                                                         value = userInput,
                                                         onValueChange = { userInput = it },
                                                         label = { Text("Your Question")},
-                                                        modifier = Modifier.fillMaxWidth()
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        keyboardOptions = KeyboardOptions.Default.copy(
+                                                                imeAction = ImeAction.Send
+                                                        ),
+                                                        keyboardActions = KeyboardActions(onSend = {
+                                                                if(userInput.isNotBlank()){
+                                                                        viewModel.sendMessage(userInput)
+                                                                        userInput = ""
+                                                                }
+                                                        }),
+                                                        singleLine = true
 
 
                                                 )

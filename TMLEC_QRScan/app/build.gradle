@@ -72,6 +72,7 @@ dependencies {
     implementation 'androidx.compose.ui:ui-tooling-preview'
     implementation 'androidx.compose.material3:material3'
     implementation 'androidx.compose.ui:ui-geometry'
+    implementation 'androidx.compose.ui:ui-text'
     
     // Material Design
     implementation 'com.google.android.material:material:1.11.0'
@@ -113,4 +114,5 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.1")
     implementation("androidx.activity:activity-compose:1.7.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.1")
+
 }
