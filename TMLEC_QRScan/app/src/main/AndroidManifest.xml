@@ -81,6 +81,9 @@
             android:exported="false"
             android:theme="@style/Theme.TMLEC_QRScan"
             android:label="Write Patient NFC Tag"
+            android:screenOrientation="portrait"
+            android:supportsPictureInPicture="false"
+            tools:ignore="LockedOrientation"
             />
         <!-- Health Connect permissions activity -->
         <activity-alias
