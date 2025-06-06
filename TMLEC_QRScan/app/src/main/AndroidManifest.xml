@@ -47,7 +47,12 @@
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.TMLEC_QRScan"
-            android:launchMode="singleTop">
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:supportsPictureInPicture="false"
+            tools:ignore="LockedOrientation"
+            >
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -75,8 +80,11 @@
             android:name=".NFCWriteActivity"
             android:exported="false"
             android:theme="@style/Theme.TMLEC_QRScan"
-            android:label="Write Patient NFC Tag" />
-
+            android:label="Write Patient NFC Tag"
+            android:screenOrientation="portrait"
+            android:supportsPictureInPicture="false"
+            tools:ignore="LockedOrientation"
+            />
         <!-- Health Connect permissions activity -->
         <activity-alias
             android:name="ViewPermissionUsageActivity"
