@@ -2106,6 +2106,14 @@ fun ResultsScreen(
                                                 }
                                         }
 
+                                        Text(
+                                                text = "Assistant",
+                                                modifier = Modifier.padding(16.dp),
+                                                color =  Color(0xFFF44336)
+
+                                        )
+
+
                                         // Disclaimer
                                         Spacer(modifier = Modifier.height(16.dp))
                                         Text(

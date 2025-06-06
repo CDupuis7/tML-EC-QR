@@ -18,6 +18,11 @@ class ChatViewModel : ViewModel() {
                 val result = RetrofitInstance.api.getChatCompletion(request)
                 if (result.isSuccessful) {
                     val reply = result.body()?.choices?.firstOrNull()?.message?.content
+                    if(reply != null) {
+                        _response.value = reply
+                    } else {
+                        _response.value = "No response"
+                    }
                 } else {
                     _response.value = "Error: ${result.code()}"
                 }
