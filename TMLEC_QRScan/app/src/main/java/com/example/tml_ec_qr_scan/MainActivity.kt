@@ -412,7 +412,7 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 modifier = Modifier
-                            .height(400.dp)
+                            .fillMaxHeight()
                             .fillMaxWidth(),
                 update = { view ->
                     Log.d("MainActivity", "🎥 AndroidView update called")
@@ -2719,6 +2719,8 @@ class MainActivity : ComponentActivity() {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
+
+
 
     /** Check and request Health Connect permissions for real health data access */
     private fun checkAndRequestHealthConnectPermissions() {
