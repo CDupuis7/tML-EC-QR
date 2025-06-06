@@ -2375,8 +2375,8 @@ class MainActivity : ComponentActivity() {
                         Pair(imageWidth, imageHeight)
                     }
 
-            val scaleX = viewWidth / width
-            val scaleY = viewHeight / height
+            val scaleX = - viewWidth / width
+            val scaleY = - viewHeight / height
             val scale = minOf(scaleX, scaleY)
 
             val offsetX = (viewWidth - width * scale) / 2
