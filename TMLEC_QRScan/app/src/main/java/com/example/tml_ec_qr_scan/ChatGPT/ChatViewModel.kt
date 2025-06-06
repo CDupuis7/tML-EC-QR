@@ -31,6 +31,7 @@ class ChatViewModel : ViewModel() {
 
                 if (result.isSuccessful) {
                     val reply = result.body()?.choices?.firstOrNull()?.message?.content
+
                     if(reply != null) {
                         _response.value = reply
                     } else {
@@ -41,7 +42,7 @@ class ChatViewModel : ViewModel() {
                     "Error: ${result.code()}"
                 }
 
-                _chatLog.value = _chatLog.value + DisplayMessage("assistant", reply)
+                _chatLog.value = _chatLog.value + DisplayMessage("assistant", _response.value)
 
             } catch (e: Exception) {
                 _chatLog.value = _chatLog.value + DisplayMessage("assistant", "Exception: ${e.message}")
